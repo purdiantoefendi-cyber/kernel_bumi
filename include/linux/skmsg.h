@@ -208,6 +208,16 @@ static inline u32 sk_msg_elem_used(const struct sk_msg *msg)
 	return sk_msg_iter_dist(msg->sg.start, msg->sg.end);
 }
 
+static inline u32 sk_msg_elem_used(const struct sk_msg *msg)
+{
+	if (sk_msg_full(msg))
+		return MAX_MSG_FRAGS;
+
+	return msg->sg.end >= msg->sg.start ?
+		msg->sg.end - msg->sg.start :
+		msg->sg.end + (MAX_MSG_FRAGS - msg->sg.start);
+}
+
 static inline struct scatterlist *sk_msg_elem(struct sk_msg *msg, int which)
 {
 	return &msg->sg.data[which];
