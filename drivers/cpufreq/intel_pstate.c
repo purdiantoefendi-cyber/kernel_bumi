@@ -177,6 +177,7 @@ struct vid_data {
  *			based on the MSR_IA32_MISC_ENABLE value and whether or
  *			not the maximum reported turbo P-state is different from
  *			the maximum reported non-turbo one.
+ * @turbo_disabled_s:	Saved @turbo_disabled value.
  * @min_perf_pct:	Minimum capacity limit in percent of the maximum turbo
  *			P-state capacity.
  * @max_perf_pct:	Maximum capacity limit in percent of the maximum turbo
@@ -185,6 +186,7 @@ struct vid_data {
 struct global_params {
 	bool no_turbo;
 	bool turbo_disabled;
+	bool turbo_disabled_s;
 	int max_perf_pct;
 	int min_perf_pct;
 };
@@ -828,6 +830,25 @@ static void intel_pstate_update_policies(void)
 
 	for_each_possible_cpu(cpu)
 		cpufreq_update_policy(cpu);
+}
+
+static void intel_pstate_update_limits(unsigned int cpu)
+{
+	mutex_lock(&intel_pstate_driver_lock);
+
+	update_turbo_state();
+	/*
+	 * If turbo has been turned on or off globally, policy limits for
+	 * all CPUs need to be updated to reflect that.
+	 */
+	if (global.turbo_disabled_s != global.turbo_disabled) {
+		global.turbo_disabled_s = global.turbo_disabled;
+		intel_pstate_update_policies();
+	} else {
+		cpufreq_update_policy(cpu);
+	}
+
+	mutex_unlock(&intel_pstate_driver_lock);
 }
 
 /************************** sysfs begin ************************/
@@ -2082,6 +2103,7 @@ static int __intel_pstate_cpu_init(struct cpufreq_policy *policy)
 	/* cpuinfo and default policy values */
 	policy->cpuinfo.min_freq = cpu->pstate.min_pstate * cpu->pstate.scaling;
 	update_turbo_state();
+	global.turbo_disabled_s = global.turbo_disabled;
 	policy->cpuinfo.max_freq = global.turbo_disabled ?
 			cpu->pstate.max_pstate : cpu->pstate.turbo_pstate;
 	policy->cpuinfo.max_freq *= cpu->pstate.scaling;
@@ -2126,6 +2148,7 @@ static struct cpufreq_driver intel_pstate = {
 	.init		= intel_pstate_cpu_init,
 	.exit		= intel_pstate_cpu_exit,
 	.stop_cpu	= intel_pstate_stop_cpu,
+	.update_limits	= intel_pstate_update_limits,
 	.name		= "intel_pstate",
 };
 
@@ -2260,6 +2283,7 @@ static struct cpufreq_driver intel_cpufreq = {
 	.init		= intel_cpufreq_cpu_init,
 	.exit		= intel_pstate_cpu_exit,
 	.stop_cpu	= intel_cpufreq_stop_cpu,
+	.update_limits	= intel_pstate_update_limits,
 	.name		= "intel_cpufreq",
 };
 
