@@ -86,6 +86,9 @@ reset:
 	return false;
 }
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/bpf_test_run.h>
+
 static int bpf_test_run(struct bpf_prog *prog, void *ctx, u32 repeat,
 			u32 *retval, u32 *time, bool xdp)
 {
