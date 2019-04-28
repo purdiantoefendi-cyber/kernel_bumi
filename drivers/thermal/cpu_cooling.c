@@ -75,7 +75,6 @@ struct cpufreq_cooling_device {
 	unsigned int clipped_freq;
 	unsigned int max_level;
 	struct em_perf_domain *em;
-	struct thermal_cooling_device *cdev;
 	struct cpufreq_policy *policy;
 	struct list_head node;
 	struct time_in_idle *idle_time;
@@ -638,7 +637,6 @@ __cpufreq_cooling_register(struct device_node *np,
 		goto free_idle_time;
 
 	cpufreq_cdev->clipped_freq = get_state_freq(cpufreq_cdev, 0);
-	cpufreq_cdev->cdev = cdev;
 
 	mutex_lock(&cooling_list_lock);
 	/* Register the notifier for first cpufreq cooling device */
@@ -805,7 +803,7 @@ void cpufreq_cooling_unregister(struct thermal_cooling_device *cdev)
 		cpufreq_unregister_notifier(&thermal_cpufreq_notifier_block,
 					    CPUFREQ_POLICY_NOTIFIER);
 
-	thermal_cooling_device_unregister(cpufreq_cdev->cdev);
+	thermal_cooling_device_unregister(cdev);
 	kfree(cpufreq_cdev->idle_time);
 	kfree(cpufreq_cdev);
 }
