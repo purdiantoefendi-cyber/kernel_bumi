@@ -1394,7 +1394,7 @@ static int fuse_get_user_pages(struct fuse_req *req, struct iov_iter *ii,
 			(PAGE_SIZE - ret) & (PAGE_SIZE - 1);
 	}
 
-	req->user_pages = true;
+	ap->args.user_pages = true;
 	if (write)
 		req->in.argpages = 1;
 	else
