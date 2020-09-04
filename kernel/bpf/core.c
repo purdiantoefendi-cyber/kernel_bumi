@@ -35,7 +35,6 @@
 #include <linux/nospec.h>
 
 #include <asm/barrier.h>
-#include <linux/log2.h>
 #include <asm/unaligned.h>
 
 #include <trace/hooks/memory.h>
