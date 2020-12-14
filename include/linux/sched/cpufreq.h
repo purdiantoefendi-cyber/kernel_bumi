@@ -56,6 +56,7 @@ __attribute__((unused)) static unsigned long mtk_map_util_freq(int cpu, unsigned
 
 	return mt_cpufreq_get_cpu_freq(cpu, target_idx);
 }
+
 #endif /* CONFIG_NONLINEAR_FREQ_CTL */
 
 #endif /* CONFIG_CPU_FREQ */
