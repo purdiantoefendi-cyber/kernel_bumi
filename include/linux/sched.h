@@ -1324,6 +1324,7 @@ struct task_struct {
 	/* Used by LSM modules for access restriction: */
 	void				*security;
 #endif
+<<<<<<< HEAD
 	/* task is frozen/stopped (used by the cgroup freezer) */
 	ANDROID_KABI_USE(1, unsigned frozen:1);
 
@@ -1353,6 +1354,8 @@ struct task_struct {
 	unsigned short inherit_cnt:14;
 	short nice_backup;
 	atomic_t inherit_types;
+#ifdef CONFIG_ANDROID_SIMPLE_LMK
+	struct task_struct		*simple_lmk_next;
 #endif
 
 	/*
@@ -2075,4 +2078,4 @@ static inline void rseq_syscall(struct pt_regs *regs)
 
 #endif
 
-#endif
+#endif /* _LINUX_SCHED_H /*
