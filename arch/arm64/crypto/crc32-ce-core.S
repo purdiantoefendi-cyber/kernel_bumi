@@ -52,7 +52,7 @@
 
 	.section	".rodata", "a"
 	.align		6
-	.cpu		generic+crypto+crc
+	.arch		armv8-a+crypto+crc
 
 .Lcrc32_constants:
 	/*
