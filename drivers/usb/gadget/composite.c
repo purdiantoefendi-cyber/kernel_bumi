@@ -1750,7 +1750,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	u16				w_length = le16_to_cpu(ctrl->wLength);
 	struct usb_function		*f = NULL;
 	u8				endp;
-	static DEFINE_RATELIMIT_STATE(ratelimit, 1 * HZ, 5);
 
 	if (w_length > USB_COMP_EP0_BUFSIZ) {
 		if (ctrl->bRequestType & USB_DIR_IN) {
@@ -1898,7 +1897,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		spin_lock(&cdev->lock);
 		value = set_config(cdev, ctrl, w_value);
 		spin_unlock(&cdev->lock);
-		INFO(cdev, "USB_REQ_SET_CONFIGURATION: value=%d\n", value);
 		break;
 	case USB_REQ_GET_CONFIGURATION:
 		if (ctrl->bRequestType != USB_DIR_IN)
@@ -1908,7 +1906,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		else
 			*(u8 *)req->buf = 0;
 		value = min(w_length, (u16) 1);
-		INFO(cdev, "USB_REQ_GET_CONFIGURATION: value=%d\n", value);
 		break;
 
 	/* function drivers must handle get/set altsetting */
@@ -1939,7 +1936,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 			DBG(cdev, "delayed_status count %d\n",
 					cdev->delayed_status);
 		}
-		INFO(cdev, "USB_REQ_SET_INTERFACE: value=%d\n", value);
 		spin_unlock(&cdev->lock);
 		break;
 	case USB_REQ_GET_INTERFACE:
@@ -1956,7 +1952,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 			break;
 		*((u8 *)req->buf) = value;
 		value = min(w_length, (u16) 1);
-		INFO(cdev, "USB_REQ_GET_INTERFACE: value=%d\n", value);
 		break;
 	case USB_REQ_GET_STATUS:
 		if (gadget_is_otg(gadget) && gadget->hnp_polling_support &&
@@ -1998,15 +1993,7 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	 * only for the first interface of the function
 	 */
 	case USB_REQ_CLEAR_FEATURE:
-		if (__ratelimit(&ratelimit))
-			INFO(cdev, "[rlimit]%s w_value=%d\n",
-					"USB_REQ_CLEAR_FEATURE",
-					w_value);
 	case USB_REQ_SET_FEATURE:
-		if (__ratelimit(&ratelimit))
-			INFO(cdev, "[rlimit]%s w_value=%d\n",
-					"USB_REQ_SET_FEATURE",
-					w_value);
 		if (!gadget_is_superspeed(gadget))
 			goto unknown;
 		if (ctrl->bRequestType != (USB_DIR_OUT | USB_RECIP_INTERFACE))
@@ -2032,12 +2019,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		break;
 	default:
 unknown:
-		if (__ratelimit(&ratelimit))
-			INFO(cdev,
-					"[rlimit]non-core req%02x.%02x v%04x i%04x l%d\n",
-					ctrl->bRequestType, ctrl->bRequest,
-					w_value, w_index, w_length);
-
 		/*
 		 * OS descriptors handling
 		 */
@@ -2211,17 +2192,6 @@ check_value:
 	}
 
 done:
-	if (value < 0) {
-		if (__ratelimit(&ratelimit)) {
-			INFO(cdev, "[rlimit]val:%d,bReqType:%x,bReq:%x\n",
-					value,
-					ctrl->bRequestType,
-					ctrl->bRequest);
-			INFO(cdev, "[rlimit]w_value=0x%x, w_length=0x%x\n",
-					w_value, w_length);
-		}
-	}
-
 	/* device either stalls (value < 0) or reports success */
 	return value;
 }
@@ -2367,8 +2337,6 @@ int composite_dev_prepare(struct usb_composite_driver *composite,
 	if (!cdev->req->buf)
 		goto fail;
 
-	pr_info("%s %p\n", __func__, cdev->req);
-
 	ret = device_create_file(&gadget->dev, &dev_attr_suspended);
 	if (ret)
 		goto fail_dev;
@@ -2412,8 +2380,6 @@ int composite_os_desc_req_prepare(struct usb_composite_dev *cdev,
 		goto end;
 	}
 
-	pr_info("%s %p\n", __func__, cdev->os_desc_req);
-
 	cdev->os_desc_req->buf = kmalloc(USB_COMP_EP0_OS_DESC_BUFSIZ,
 					 GFP_KERNEL);
 	if (!cdev->os_desc_req->buf) {
@@ -2436,12 +2402,6 @@ void composite_dev_cleanup(struct usb_composite_dev *cdev)
 		list_del(&uc->list);
 		kfree(uc);
 	}
-
-	pr_info("%s os_desc_req[%d]=%p cdev->req[%d]=%p\n",
-			__func__,
-			cdev->os_desc_pending, cdev->os_desc_req,
-			cdev->setup_pending, cdev->req);
-
 	if (cdev->os_desc_req) {
 		if (cdev->os_desc_pending)
 			usb_ep_dequeue(cdev->gadget->ep0, cdev->os_desc_req);
@@ -2634,8 +2594,6 @@ int usb_composite_probe(struct usb_composite_driver *driver)
 
 	if (!driver || !driver->dev || !driver->bind)
 		return -EINVAL;
-
-	pr_info("%s: driver->name = %s", __func__, driver->name);
 
 	if (!driver->name)
 		driver->name = "composite";
