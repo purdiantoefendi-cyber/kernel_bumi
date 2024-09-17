@@ -2042,7 +2042,7 @@ static int __init scp_init(void)
 	/* scp logger initialise */
 	pr_debug("[SCP] logger init\n");
 	/*create wq for scp logger*/
-	scp_logger_workqueue = create_singlethread_workqueue("SCP_LOG_WQ");
+	scp_logger_workqueue = alloc_ordered_workqueue("SCP_LOG_WQ", WQ_MEM_RECLAIM | WQ_POWER_EFFICIENT);
 	if (scp_logger_init(scp_get_reserve_mem_virt(SCP_A_LOGGER_MEM_ID),
 		scp_get_reserve_mem_size(SCP_A_LOGGER_MEM_ID)) == -1) {
 		pr_err("[SCP] scp_logger_init_fail\n");
