@@ -1187,7 +1187,7 @@ static struct usb_composite_driver android_usb_driver = {
 #endif
 };
 
-#define USB_STATE_MONITOR_DELAY 3000
+#define USB_STATE_MONITOR_DELAY 10000
 static struct delayed_work android_usb_state_monitor_work;
 static void do_android_usb_state_monitor_work(struct work_struct *work)
 {
@@ -1201,7 +1201,7 @@ static void do_android_usb_state_monitor_work(struct work_struct *work)
 		usb_state = "CONFIGURED";
 
 	pr_info("usb_state<%s>\n", usb_state);
-	schedule_delayed_work(&android_usb_state_monitor_work,
+	queue_delayed_work(system_power_efficient_wq, &android_usb_state_monitor_work,
 			msecs_to_jiffies(USB_STATE_MONITOR_DELAY));
 }
 void trigger_android_usb_state_monitor_work(void)
@@ -1218,7 +1218,7 @@ void trigger_android_usb_state_monitor_work(void)
 				do_android_usb_state_monitor_work);
 		inited = 1;
 	}
-	schedule_delayed_work(&android_usb_state_monitor_work,
+	queue_delayed_work(system_power_efficient_wq, &android_usb_state_monitor_work,
 			msecs_to_jiffies(USB_STATE_MONITOR_DELAY));
 
 };
