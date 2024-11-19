@@ -2717,7 +2717,7 @@ void scheduler_ipi(void)
 #endif
 		) {
 		this_rq()->idle_balance = 1;
-		raise_softirq_irqoff(SCHED_SOFTIRQ);
+		__raise_softirq_irqoff(SCHED_SOFTIRQ);
 	}
 	irq_exit();
 }
