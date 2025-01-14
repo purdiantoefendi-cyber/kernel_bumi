@@ -3,7 +3,7 @@
  * Copyright (c) 2020 MediaTek Inc.
  */
 
-#define DEBUG 1
+#define DEBUG 0
 /* system includes */
 #include <linux/kernel.h>
 #include <linux/module.h>
