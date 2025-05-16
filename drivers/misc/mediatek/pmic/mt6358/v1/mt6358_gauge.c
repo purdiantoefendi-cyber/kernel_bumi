@@ -2251,6 +2251,7 @@ static int fgauge_set_zcv_interrupt_threshold(
 	return 0;
 }
 
+#ifdef CONFIG_MTK_ENG_BUILD
 void battery_dump_nag(void)
 {
 	unsigned int nag_vbat_reg, vbat_val;
@@ -2300,6 +2301,7 @@ void battery_dump_nag(void)
 		pmic_get_register_value(PMIC_RG_INT_STATUS_NAG_C_DLTV)
 	);
 }
+#endif
 
 static int fgauge_get_nag_vbat(struct gauge_device *gauge_dev, int *vbat)
 {
@@ -3120,6 +3122,7 @@ int fgauge_set_reset_status(struct gauge_device *gauge_dev, int reset)
 
 }
 
+#ifdef CONFIG_MTK_ENG_BUILD
 static void fgauge_dump_type0(struct seq_file *m)
 {
 	int vbif28;
@@ -3241,6 +3244,7 @@ static int fgauge_dump(
 
 	return 0;
 }
+#endif
 
 static int fgauge_get_hw_version(struct gauge_device *gauge_dev)
 {
@@ -3408,7 +3412,9 @@ static struct gauge_ops mt6358_gauge_ops = {
 	.gauge_get_rtc_ui_soc = fgauge_get_rtc_ui_soc,
 	.gauge_is_rtc_invalid = fgauge_is_rtc_invalid,
 	.gauge_set_reset_status = fgauge_set_reset_status,
+#ifdef CONFIG_MTK_ENG_BUILD
 	.gauge_dump = fgauge_dump,
+#endif
 	.gauge_get_hw_version = fgauge_get_hw_version,
 	.gauge_set_info = fgauge_set_info,
 	.gauge_get_info = fgauge_get_info,
