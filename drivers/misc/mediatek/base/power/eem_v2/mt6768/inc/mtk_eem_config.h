@@ -11,7 +11,7 @@
 #define EN_ISR_LOG		(0)
 #define EEM_BANK_SOC		(0) /* use voltage bin, so disable it */
 #define EARLY_PORTING		(0) /* for detecting real vboot in eem_init01 */
-#define DUMP_DATA_TO_DE		(1)
+#define DUMP_DATA_TO_DE		(0)
 #define EEM_ENABLE		(1) /* enable; after pass HPT mini-SQC */
 #define EEM_FAKE_EFUSE		(1)
 /* FIX ME */
