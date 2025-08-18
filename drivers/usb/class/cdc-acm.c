@@ -1580,6 +1580,8 @@ skip_countries:
 
 	dev_info(&intf->dev, "ttyACM%d: USB ACM device\n", minor);
 
+	dev_info(&intf->dev, "ttyACM%d: USB ACM device\n", minor);
+
 	return 0;
 alloc_fail6:
 	if (!acm->combined_interfaces) {
