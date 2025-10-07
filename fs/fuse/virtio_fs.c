@@ -80,9 +80,13 @@ enum {
 	OPT_DAX,
 };
 
-static const struct fs_parameter_spec virtio_fs_parameters[] = {
+static const struct fs_parameter_spec virtio_param_specs[] = {
 	fsparam_flag("dax", OPT_DAX),
 	{}
+};
+
+static const struct fs_parameter_description virtio_fs_parameters = {
+       .specs          = virtio_param_specs,
 };
 
 static int virtio_fs_parse_param(struct fs_context *fc,
@@ -92,7 +96,7 @@ static int virtio_fs_parse_param(struct fs_context *fc,
 	struct fuse_fs_context *ctx = fc->fs_private;
 	int opt;
 
-	opt = fs_parse(fc, virtio_fs_parameters, param, &result);
+	opt = fs_parse(fc, &virtio_fs_parameters, param, &result);
 	if (opt < 0)
 		return opt;
 
