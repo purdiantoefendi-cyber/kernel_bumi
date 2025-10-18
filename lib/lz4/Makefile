@@ -1,4 +1,7 @@
-ccflags-y += -O3
+ccflags-y += -O3 \
+     -DLZ4_FREESTANDING=1 \
+     -DLZ4_FAST_DEC_LOOP=1 \
+     -Wno-frame-larger-than
 
 obj-y += lz4.o lz4hc.o
 
