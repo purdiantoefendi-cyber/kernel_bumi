@@ -1324,7 +1324,6 @@ struct task_struct {
 	/* Used by LSM modules for access restriction: */
 	void				*security;
 #endif
-<<<<<<< HEAD
 	/* task is frozen/stopped (used by the cgroup freezer) */
 	ANDROID_KABI_USE(1, unsigned frozen:1);
 
@@ -2079,3 +2078,4 @@ static inline void rseq_syscall(struct pt_regs *regs)
 #endif
 
 #endif /* _LINUX_SCHED_H /*
+
