@@ -18,7 +18,6 @@
 
 struct vibrator_hw *pvib_cust;
 
-#ifdef CONFIG_MTK_ENG_BUILD
 static int debug_enable_vib_hal = 1;
 /* #define pr_fmt(fmt) "[vibrator]"fmt */
 #define VIB_DEBUG(format, args...) do { \
@@ -26,11 +25,6 @@ static int debug_enable_vib_hal = 1;
 		pr_debug(format, ##args);\
 	} \
 } while (0)
-#else
-static int debug_enable_vib_hal = 0;
-/* #define pr_fmt(fmt) "[vibrator]"fmt */
-#define VIB_DEBUG(format, args...) ((void)0)
-#endif
 
 #define OC_INTR_INIT_DELAY      (3)
 
