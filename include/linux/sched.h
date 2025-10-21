@@ -2074,8 +2074,6 @@ void rseq_syscall(struct pt_regs *regs);
 static inline void rseq_syscall(struct pt_regs *regs)
 {
 }
-
 #endif
 
-#endif /* _LINUX_SCHED_H /*
-
+#endif /* _LINUX_SCHED_H */
