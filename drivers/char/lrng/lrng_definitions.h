@@ -115,6 +115,9 @@
  * This definition must provide a buffer that is equal to SHASH_DESC_ON_STACK
  * as it will be casted into a struct shash_desc.
  */
+#ifndef HASH_MAX_DESCSIZE
+#define HASH_MAX_DESCSIZE 128
+#endif
 #define LRNG_POOL_SIZE	(sizeof(struct shash_desc) + HASH_MAX_DESCSIZE)
 
 /****************************** Helper code ***********************************/
