@@ -211,11 +211,11 @@ static int slp_suspend_ops_enter(suspend_state_t state)
 		slp_wake_reason = get_slp_dp_last_wr();
 		slp_dp_cnt[smp_processor_id()]++;
 	} else {
-#endif
 		mtk_suspend_cond_info();
 
 		slp_wake_reason = spm_go_to_sleep();
 	}
+#endif
 
 	mcdi_task_pause(false);
 
