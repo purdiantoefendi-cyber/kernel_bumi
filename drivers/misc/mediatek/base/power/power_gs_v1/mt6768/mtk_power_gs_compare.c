@@ -32,6 +32,7 @@ void mt_power_gs_table_init(void)
 				AP_DCM_Golden_Setting_tcl_gs_sodi_len);
 }
 
+#ifdef CONFIG_MTK_ENG_BUILD
 void mt_power_gs_suspend_compare(unsigned int dump_flag)
 {
 	if (dump_flag & GS_PMIC) {
@@ -106,3 +107,4 @@ void mt_power_gs_sodi_compare(unsigned int dump_flag)
 
 	mt_power_gs_sp_dump();
 }
+#endif

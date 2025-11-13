@@ -325,6 +325,7 @@ unsigned int mt_power_gs_base_remap_init(char *scenario, char *pmic_name,
 	return 0;
 }
 
+#ifdef CONFIG_MTK_ENG_BUILD
 #define PER_LINE_TO_PRINT 8
 
 void mt_power_gs_pmic_manual_dump(void)
@@ -429,3 +430,4 @@ void mt_power_gs_compare(char *scenario, char *pmic_name,
 			pr_notice("%s", buf);
 	}
 }
+#endif
