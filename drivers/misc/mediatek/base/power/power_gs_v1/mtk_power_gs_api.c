@@ -27,7 +27,6 @@
 	(sizeof(struct snapshot) + sizeof(unsigned int) * (g->nr_gs - 1))
 #define DEBUG_BUF_SIZE 2000
 
-static char buf[DEBUG_BUF_SIZE] = { 0 };
 static struct base_remap br;
 static struct pmic_manual_dump pmd;
 
