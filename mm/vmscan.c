@@ -2598,7 +2598,7 @@ module_param_named(scan_anon_prio, scan_anon_priority, int, 0644);
 int vm_workingset_protection_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos)
 {
-	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+	int ret = proc_dou8vec_minmax(table, write, buffer, lenp, ppos);
 	if (ret || !write)
 		return ret;
 
