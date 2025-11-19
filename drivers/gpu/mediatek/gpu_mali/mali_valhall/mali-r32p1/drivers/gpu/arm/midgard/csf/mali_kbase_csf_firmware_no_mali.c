@@ -1289,7 +1289,7 @@ int kbase_csf_firmware_mcu_shared_mapping_init(
 
 	ret = kbase_mem_pool_alloc_pages(
 		&kbdev->mem_pools.small[KBASE_MEM_GROUP_CSF_FW],
-		num_pages, phys, false, NULL);
+		num_pages, phys, false);
 	if (ret <= 0)
 		goto phys_mem_pool_alloc_error;
 
@@ -1331,7 +1331,7 @@ int kbase_csf_firmware_mcu_shared_mapping_init(
 
 mmu_insert_pages_error:
 	mutex_lock(&kbdev->csf.reg_lock);
-	kbase_remove_va_region(kbdev, va_reg);
+	kbase_remove_va_region(va_reg);
 va_region_add_error:
 	kbase_free_alloced_region(va_reg);
 	mutex_unlock(&kbdev->csf.reg_lock);
@@ -1363,7 +1363,7 @@ void kbase_csf_firmware_mcu_shared_mapping_term(
 {
 	if (csf_mapping->va_reg) {
 		mutex_lock(&kbdev->csf.reg_lock);
-		kbase_remove_va_region(kbdev, csf_mapping->va_reg);
+		kbase_remove_va_region(csf_mapping->va_reg);
 		kbase_free_alloced_region(csf_mapping->va_reg);
 		mutex_unlock(&kbdev->csf.reg_lock);
 	}

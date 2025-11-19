@@ -38,13 +38,6 @@
 /* Required for kbase_mem_evictable_unmake */
 #include "mali_kbase_mem_linux.h"
 
-#if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
-#include <mtk/ion_drv.h>
-#include <mtk/mtk_ion.h>
-#include <ion.h>
-#include <mach/mt_iommu.h>
-#endif
-
 static inline void kbase_process_page_usage_inc(struct kbase_context *kctx,
 		int pages);
 
@@ -160,10 +153,6 @@ struct kbase_mem_phy_alloc {
 			unsigned int current_mapping_usage_count;
 			struct sg_table *sgt;
 			bool need_sync;
-#if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
-			struct ion_client *ion_client;
-			struct ion_handle *ion_handle;
-#endif
 		} umm;
 		struct {
 			u64 stride;
@@ -312,8 +301,6 @@ static inline struct kbase_mem_phy_alloc *kbase_mem_phy_alloc_put(struct kbase_m
  * @jit_usage_id: The last just-in-time memory usage ID for this region.
  * @jit_bin_id:   The just-in-time memory bin this region came from.
  * @va_refcnt:    Number of users of this region. Protected by reg_lock.
- * @no_user_free_refcnt:    Number of users that want to prevent the region from
- *                          being freed by userspace.
  * @heap_info_gpu_addr: Pointer to an object in GPU memory defining an end of
  *                      an allocated region
  *                      The object can be one of:
@@ -419,7 +406,10 @@ struct kbase_va_region {
 #define KBASE_REG_RESERVED_BIT_23   (1ul << 23)
 #endif /* !MALI_USE_CSF */
 
-/* Bit 24 is currently unused and is available for use for a new flag */
+/* Whilst this flag is set the GPU allocation is not supposed to be freed by
+ * user space. The flag will remain set for the lifetime of JIT allocations.
+ */
+#define KBASE_REG_NO_USER_FREE      (1ul << 24)
 
 /* Memory has permanent kernel side mapping */
 #define KBASE_REG_PERMANENT_KERNEL_MAPPING (1ul << 25)
@@ -514,23 +504,7 @@ struct kbase_va_region {
 #endif /* MALI_JIT_PRESSURE_LIMIT_BASE */
 
 	int    va_refcnt;
-	int no_user_free_refcnt;
 };
-
-/**
- * kbase_is_ctx_reg_zone - determine whether a KBASE_REG_ZONE_<...> is for a
- *                         context or for a device
- * @zone_bits: A KBASE_REG_ZONE_<...> to query
- *
- * Return: True if the zone for @zone_bits is a context zone, False otherwise
- */
-static inline bool kbase_is_ctx_reg_zone(unsigned long zone_bits)
-{
-	WARN_ON((zone_bits & KBASE_REG_ZONE_MASK) != zone_bits);
-	return (zone_bits == KBASE_REG_ZONE_SAME_VA ||
-		zone_bits == KBASE_REG_ZONE_CUSTOM_VA ||
-		zone_bits == KBASE_REG_ZONE_EXEC_VA);
-}
 
 /* Special marker for failed JIT allocations that still must be marked as
  * in-use
@@ -555,31 +529,12 @@ static inline bool kbase_is_region_invalid_or_free(struct kbase_va_region *reg)
 	return (kbase_is_region_invalid(reg) ||	kbase_is_region_free(reg));
 }
 
-/**
- * kbase_is_region_shrinkable - Check if a region is "shrinkable".
- * A shrinkable regions is a region for which its backing pages (reg->gpu_alloc->pages)
- * can be freed at any point, even though the kbase_va_region structure itself
- * may have been refcounted.
- * Regions that aren't on a shrinker, but could be shrunk at any point in future
- * without warning are still considered "shrinkable" (e.g. Active JIT allocs)
- *
- * @reg: Pointer to region
- *
- * Return: true if the region is "shrinkable", false if not.
- */
-static inline bool kbase_is_region_shrinkable(struct kbase_va_region *reg)
-{
-	return (reg->flags & KBASE_REG_DONT_NEED) || (reg->flags & KBASE_REG_ACTIVE_JIT_ALLOC);
-}
-
-void kbase_remove_va_region(struct kbase_device *kbdev,
-			    struct kbase_va_region *reg);
-static inline void kbase_region_refcnt_free(struct kbase_device *kbdev,
-					    struct kbase_va_region *reg)
+int kbase_remove_va_region(struct kbase_va_region *reg);
+static inline void kbase_region_refcnt_free(struct kbase_va_region *reg)
 {
 	/* If region was mapped then remove va region*/
 	if (reg->start_pfn)
-		kbase_remove_va_region(kbdev, reg);
+		kbase_remove_va_region(reg);
 
 	/* To detect use-after-free in debug builds */
 	KBASE_DEBUG_CODE(reg->flags |= KBASE_REG_FREE);
@@ -592,7 +547,6 @@ static inline struct kbase_va_region *kbase_va_region_alloc_get(
 	lockdep_assert_held(&kctx->reg_lock);
 
 	WARN_ON(!region->va_refcnt);
-	WARN_ON(region->va_refcnt == INT_MAX);
 
 	/* non-atomic as kctx->reg_lock is held */
 	dev_dbg(kctx->kbdev->dev, "va_refcnt %d before get %pK\n",
@@ -615,72 +569,9 @@ static inline struct kbase_va_region *kbase_va_region_alloc_put(
 	dev_dbg(kctx->kbdev->dev, "va_refcnt %d after put %pK\n",
 		region->va_refcnt, (void *)region);
 	if (!region->va_refcnt)
-		kbase_region_refcnt_free(kctx->kbdev, region);
+		kbase_region_refcnt_free(region);
 
 	return NULL;
-}
-
-/**
- * kbase_va_region_is_no_user_free - Check if user free is forbidden for the region.
- * A region that must not be freed by userspace indicates that it is owned by some other
- * kbase subsystem, for example tiler heaps, JIT memory or CSF queues.
- * Such regions must not be shrunk (i.e. have their backing pages freed), except by the
- * current owner.
- * Hence, callers cannot rely on this check alone to determine if a region might be shrunk
- * by any part of kbase. Instead they should use kbase_is_region_shrinkable().
- *
- * @kctx: Pointer to kbase context.
- * @region: Pointer to region.
- *
- * Return: true if userspace cannot free the region, false if userspace can free the region.
- */
-static inline bool kbase_va_region_is_no_user_free(struct kbase_context *kctx,
-						   struct kbase_va_region *region)
-{
-	lockdep_assert_held(&kctx->reg_lock);
-	return region->no_user_free_refcnt > 0;
-}
-
-/**
- * kbase_va_region_no_user_free_get - Increment "no user free" refcount for a region.
- * Calling this function will prevent the region to be shrunk by parts of kbase that
- * don't own the region (as long as the refcount stays above zero). Refer to
- * kbase_va_region_is_no_user_free() for more information.
- *
- * @kctx: Pointer to kbase context.
- * @region: Pointer to region (not shrinkable).
- *
- * Return: the pointer to the region passed as argument.
- */
-static inline struct kbase_va_region *
-kbase_va_region_no_user_free_get(struct kbase_context *kctx, struct kbase_va_region *region)
-{
-	lockdep_assert_held(&kctx->reg_lock);
-
-	WARN_ON(kbase_is_region_shrinkable(region));
-	WARN_ON(region->no_user_free_refcnt == INT_MAX);
-
-	/* non-atomic as kctx->reg_lock is held */
-	region->no_user_free_refcnt++;
-
-	return region;
-}
-
-/**
- * kbase_va_region_no_user_free_put - Decrement "no user free" refcount for a region.
- *
- * @kctx: Pointer to kbase context.
- * @region: Pointer to region (not shrinkable).
- */
-static inline void kbase_va_region_no_user_free_put(struct kbase_context *kctx,
-						    struct kbase_va_region *region)
-{
-	lockdep_assert_held(&kctx->reg_lock);
-
-	WARN_ON(!kbase_va_region_is_no_user_free(kctx, region));
-
-	/* non-atomic as kctx->reg_lock is held */
-	region->no_user_free_refcnt--;
 }
 
 /* Common functions */
@@ -997,8 +888,7 @@ void kbase_mem_pool_free_locked(struct kbase_mem_pool *pool, struct page *p,
  * this lock, it should use kbase_mem_pool_alloc_pages_locked() instead.
  */
 int kbase_mem_pool_alloc_pages(struct kbase_mem_pool *pool, size_t nr_4k_pages,
-		struct tagged_addr *pages, bool partial_allowed,
-		struct task_struct *page_owner);
+		struct tagged_addr *pages, bool partial_allowed);
 
 /**
  * kbase_mem_pool_alloc_pages_locked - Allocate pages from memory pool
@@ -1116,8 +1006,7 @@ void kbase_mem_pool_set_max_size(struct kbase_mem_pool *pool, size_t max_size);
  *
  * Returns: 0 on success, -ENOMEM if unable to allocate sufficent pages
  */
-int kbase_mem_pool_grow(struct kbase_mem_pool *pool, size_t nr_to_grow,
-										struct task_struct *page_owner);
+int kbase_mem_pool_grow(struct kbase_mem_pool *pool, size_t nr_to_grow);
 
 /**
  * kbase_mem_pool_trim - Grow or shrink the pool to a new size
@@ -1335,7 +1224,6 @@ void kbase_mmu_disable_as(struct kbase_device *kbdev, int as_nr);
 
 void kbase_mmu_interrupt(struct kbase_device *kbdev, u32 irq_stat);
 
-#if defined(CONFIG_MALI_VECTOR_DUMP)
 /**
  * kbase_mmu_dump() - Dump the MMU tables to a buffer.
  *
@@ -1355,7 +1243,6 @@ void kbase_mmu_interrupt(struct kbase_device *kbdev, u32 irq_stat);
  * (including if the @c nr_pages is too small)
  */
 void *kbase_mmu_dump(struct kbase_context *kctx, int nr_pages);
-#endif
 
 /**
  * kbase_sync_now - Perform cache maintenance on a memory region
@@ -1892,28 +1779,25 @@ bool kbase_has_exec_va_zone(struct kbase_context *kctx);
 /**
  * kbase_map_external_resource - Map an external resource to the GPU.
  * @kctx:              kbase context.
- * @reg:               External resource to map.
+ * @reg:               The region to map.
  * @locked_mm:         The mm_struct which has been locked for this operation.
  *
- * On successful mapping, the VA region and the gpu_alloc refcounts will be
- * increased, making it safe to use and store both values directly.
- *
- * Return: Zero on success, or negative error code.
+ * Return: The physical allocation which backs the region on success or NULL
+ * on failure.
  */
-int kbase_map_external_resource(struct kbase_context *kctx, struct kbase_va_region *reg,
-				struct mm_struct *locked_mm);
+struct kbase_mem_phy_alloc *kbase_map_external_resource(
+		struct kbase_context *kctx, struct kbase_va_region *reg,
+		struct mm_struct *locked_mm);
 
 /**
  * kbase_unmap_external_resource - Unmap an external resource from the GPU.
  * @kctx:  kbase context.
- * @reg:   VA region corresponding to external resource
- *
- * On successful unmapping, the VA region and the gpu_alloc refcounts will
- * be decreased. If the refcount reaches zero, both @reg and the corresponding
- * allocation may be freed, so using them after returning from this function
- * requires the caller to explicitly check their state.
+ * @reg:   The region to unmap or NULL if it has already been released.
+ * @alloc: The physical allocation being unmapped.
  */
-void kbase_unmap_external_resource(struct kbase_context *kctx, struct kbase_va_region *reg);
+void kbase_unmap_external_resource(struct kbase_context *kctx,
+		struct kbase_va_region *reg, struct kbase_mem_phy_alloc *alloc);
+
 
 /**
  * kbase_jd_user_buf_pin_pages - Pin the pages of a user buffer.
@@ -2141,7 +2025,7 @@ int kbase_mem_copy_to_pinned_user_pages(struct page **dest_pages,
 		unsigned int *target_page_nr, size_t offset);
 
 /**
- * kbase_reg_zone_end_pfn - return the end Page Frame Number of @zone
+ * kbase_ctx_reg_zone_end_pfn - return the end Page Frame Number of @zone
  * @zone: zone to query
  *
  * Return: The end of the zone corresponding to @zone
@@ -2166,7 +2050,7 @@ static inline void kbase_ctx_reg_zone_init(struct kbase_context *kctx,
 	struct kbase_reg_zone *zone;
 
 	lockdep_assert_held(&kctx->reg_lock);
-	WARN_ON(!kbase_is_ctx_reg_zone(zone_bits));
+	WARN_ON((zone_bits & KBASE_REG_ZONE_MASK) != zone_bits);
 
 	zone = &kctx->reg_zone[KBASE_REG_ZONE_IDX(zone_bits)];
 	*zone = (struct kbase_reg_zone){
@@ -2189,7 +2073,7 @@ static inline struct kbase_reg_zone *
 kbase_ctx_reg_zone_get_nolock(struct kbase_context *kctx,
 			      unsigned long zone_bits)
 {
-	WARN_ON(!kbase_is_ctx_reg_zone(zone_bits));
+	WARN_ON((zone_bits & KBASE_REG_ZONE_MASK) != zone_bits);
 
 	return &kctx->reg_zone[KBASE_REG_ZONE_IDX(zone_bits)];
 }
@@ -2207,30 +2091,9 @@ static inline struct kbase_reg_zone *
 kbase_ctx_reg_zone_get(struct kbase_context *kctx, unsigned long zone_bits)
 {
 	lockdep_assert_held(&kctx->reg_lock);
-	WARN_ON(!kbase_is_ctx_reg_zone(zone_bits));
+	WARN_ON((zone_bits & KBASE_REG_ZONE_MASK) != zone_bits);
 
 	return &kctx->reg_zone[KBASE_REG_ZONE_IDX(zone_bits)];
 }
 
-/**
- * kbase_mem_allow_alloc - Check if allocation of GPU memory is allowed
- * @kctx: Pointer to kbase context
- *
- * Don't allow the allocation of GPU memory until user space has set up the
- * tracking page (which sets kctx->process_mm) or if the ioctl has been issued
- * from the forked child process using the mali device file fd inherited from
- * the parent process.
- *
- * Return: true if allocation is allowed.
- */
-static inline bool kbase_mem_allow_alloc(struct kbase_context *kctx)
-{
-	bool allow_alloc = true;
-
-	rcu_read_lock();
-	allow_alloc = (rcu_dereference(kctx->process_mm) == current->mm);
-	rcu_read_unlock();
-
-	return allow_alloc;
-}
 #endif				/* _KBASE_MEM_H_ */
