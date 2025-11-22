@@ -5,7 +5,6 @@
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
-#include <linux/sched/bitops.h>
 #include <linux/sched/clock.h>
 #include <linux/sched/coredump.h>
 #include <linux/sched/cpufreq.h>
@@ -37,6 +36,7 @@
 #include <uapi/linux/sched/types.h>
 
 #include <linux/binfmts.h>
+#include <linux/bitops.h>
 #include <linux/blkdev.h>
 #include <linux/compat.h>
 #include <linux/context_tracking.h>
