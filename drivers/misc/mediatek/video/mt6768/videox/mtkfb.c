@@ -214,14 +214,12 @@ static ssize_t mtkfb_get_panel_info(struct device *dev,struct device_attribute *
 static ssize_t mtkfb_get_disp_param(struct device *dev,struct device_attribute *attr, char *buf)
 {
        int ret;
-       printk("[%s] \n", __func__);
        return ret;
 }
 
 static ssize_t mtkfb_set_disp_param(struct device *dev,struct device_attribute *attr,const char *buf, size_t count)
 {
        int ret;
-       printk("[%s] \n", __func__);
        return ret;
 }
 
@@ -235,7 +233,6 @@ static int __init mtkfb_get_white_point(char *p)
 {
 	char wpoint[10];
 	strlcpy(wpoint, p, sizeof(wpoint));
-	printk("[%s]: white_point = %s\n", __func__, wpoint);
 	pr_err("mtkfb_get_white_point come in !!!\n");
 	lcd_wp_para.white_point_x = (wpoint[0]-'0') * 100
 		+ (wpoint[1]-'0') * 10 + (wpoint[2]-'0');
