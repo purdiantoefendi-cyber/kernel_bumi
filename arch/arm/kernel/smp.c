@@ -791,20 +791,15 @@ static int cpufreq_callback(struct notifier_block *nb,
 					unsigned long val, void *data)
 {
 	struct cpufreq_freqs *freq = data;
-	struct cpumask *cpus = freq->policy->cpus;
-	int cpu, first = cpumask_first(cpus);
-	unsigned int lpj;
+	int cpu = freq->cpu;
 
 	if (freq->flags & CPUFREQ_CONST_LOOPS)
 		return NOTIFY_OK;
 
-	if (!per_cpu(l_p_j_ref, first)) {
-		for_each_cpu(cpu, cpus) {
-			per_cpu(l_p_j_ref, cpu) =
-				per_cpu(cpu_data, cpu).loops_per_jiffy;
-			per_cpu(l_p_j_ref_freq, cpu) = freq->old;
-		}
-
+	if (!per_cpu(l_p_j_ref, cpu)) {
+		per_cpu(l_p_j_ref, cpu) =
+			per_cpu(cpu_data, cpu).loops_per_jiffy;
+		per_cpu(l_p_j_ref_freq, cpu) = freq->old;
 		if (!global_l_p_j_ref) {
 			global_l_p_j_ref = loops_per_jiffy;
 			global_l_p_j_ref_freq = freq->old;
@@ -816,11 +811,10 @@ static int cpufreq_callback(struct notifier_block *nb,
 		loops_per_jiffy = cpufreq_scale(global_l_p_j_ref,
 						global_l_p_j_ref_freq,
 						freq->new);
-
-		lpj = cpufreq_scale(per_cpu(l_p_j_ref, first),
-				    per_cpu(l_p_j_ref_freq, first), freq->new);
-		for_each_cpu(cpu, cpus)
-			per_cpu(cpu_data, cpu).loops_per_jiffy = lpj;
+		per_cpu(cpu_data, cpu).loops_per_jiffy =
+			cpufreq_scale(per_cpu(l_p_j_ref, cpu),
+					per_cpu(l_p_j_ref_freq, cpu),
+					freq->new);
 	}
 	return NOTIFY_OK;
 }
