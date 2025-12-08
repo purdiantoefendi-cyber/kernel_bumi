@@ -30,17 +30,33 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
-      # --- PERBAIKAN: PATCH COMPATIBILITY (Baru) ---
-      - name: Fix access_ok for Old Kernels
+       # --- PERBAIKAN: PATCH COMPATIBILITY (GABUNGAN) ---
+      - name: Fix KernelSU Compatibility
         run: |
-          # Mengecek apakah file kpm.c ada, lalu melakukan patch
-          if [ -f "drivers/kernelsu/kpm/kpm.c" ]; then
-            echo "Patching kpm.c for 3-argument access_ok..."
-            # Mengubah access_ok(a, b) menjadi access_ok(0, a, b)
-            sed -i 's/access_ok(/access_ok(0, /g' drivers/kernelsu/kpm/kpm.c
+          echo "Starting KernelSU patches for older kernels..."
+          
+          # --- PATCH 1: Fix access_ok (Masalah argumen 2 vs 3) ---
+          FILE_KPM="drivers/kernelsu/kpm/kpm.c"
+          if [ -f "$FILE_KPM" ]; then
+            echo "Patching access_ok in $FILE_KPM..."
+            # Gunakan regex yang lebih kuat untuk menangani spasi
+            sed -i -E 's/access_ok\s*\(/access_ok(0, /g' "$FILE_KPM"
           else
-            echo "File kpm.c not found, skipping patch."
+            echo "⚠️ Warning: $FILE_KPM not found."
           fi
+
+          # --- PATCH 2: Hapus MODULE_IMPORT_NS (Fitur Kernel 5.4+) ---
+          FILE_KSU="drivers/kernelsu/ksu.c"
+          if [ -f "$FILE_KSU" ]; then
+             echo "Removing MODULE_IMPORT_NS from $FILE_KSU..."
+             # Menghapus baris yang mengandung MODULE_IMPORT_NS
+             sed -i '/MODULE_IMPORT_NS/d' "$FILE_KSU"
+          else
+             echo "⚠️ Warning: $FILE_KSU not found."
+          fi
+          
+          echo "✅ Patching complete."
+
 
       # --- BAGIAN UPLOAD KE REPO (Sesuai request sebelumnya) ---
       - name: Commit & Push SukiSU Integration
