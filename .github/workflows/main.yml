@@ -30,6 +30,31 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
+      # --- PERBAIKAN: PATCH COMPATIBILITY (Baru) ---
+      - name: Fix access_ok for Old Kernels
+        run: |
+          # Mengecek apakah file kpm.c ada, lalu melakukan patch
+          if [ -f "drivers/kernelsu/kpm/kpm.c" ]; then
+            echo "Patching kpm.c for 3-argument access_ok..."
+            # Mengubah access_ok(a, b) menjadi access_ok(0, a, b)
+            sed -i 's/access_ok(/access_ok(0, /g' drivers/kernelsu/kpm/kpm.c
+          else
+            echo "File kpm.c not found, skipping patch."
+          fi
+
+      # --- BAGIAN UPLOAD KE REPO (Sesuai request sebelumnya) ---
+      - name: Commit & Push SukiSU Integration
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          if [[ -n $(git status -s) ]]; then
+            git commit -m "chore: Integrate SukiSU Ultra & Fix Compat [skip ci]"
+            git push origin main
+          else
+            echo "No changes detected."
+          fi
+
       # Langkah 5: Unduh Toolchain Clang
       - name: Download Clang Toolchain
         run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
