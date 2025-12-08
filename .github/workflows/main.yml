@@ -25,6 +25,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex gcc-aarch64-linux-gnu
 
+      # Langkah 3: Integrasi SukiSU-Ultra
+      - name: Integrate SukiSU Ultra
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+
       # Langkah 5: Unduh Toolchain Clang
       - name: Download Clang Toolchain
         run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
