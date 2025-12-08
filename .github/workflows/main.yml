@@ -11,13 +11,14 @@ jobs:
       contents: write
 
     steps:
-      # Langkah 1: Checkout Kode Sumber
+      # Langkah 1: Checkout Kode Sumber (DIPERBAIKI)
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          ref: main   # branch kamu
-          fetch-depth: 0   # penting agar bisa ambil history penuh
-          submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
+          ref: main
+          fetch-depth: 1           # Diubah ke 1 agar lebih cepat & stabil
+          persist-credentials: false # PENTING: Mencegah error "auth placeholder"
+          submodules: true         # Mengambil submodule jika ada
 
       # Langkah 2: Install Dependensi
       - name: Install Dependencies
@@ -30,46 +31,43 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
-       # --- PERBAIKAN: PATCH COMPATIBILITY (GABUNGAN) ---
-      - name: Fix KernelSU Compatibility
+      # --- PERBAIKAN TOTAL: PATCH COMPATIBILITY ---
+      - name: Fix KernelSU for Old Kernels
         run: |
-          echo "Starting KernelSU patches for older kernels..."
+          echo "🔍 Searching for kpm.c and ksu.c..."
           
-          # --- PATCH 1: Fix access_ok (Masalah argumen 2 vs 3) ---
-          FILE_KPM="drivers/kernelsu/kpm/kpm.c"
-          if [ -f "$FILE_KPM" ]; then
-            echo "Patching access_ok in $FILE_KPM..."
-            # Gunakan regex yang lebih kuat untuk menangani spasi
-            sed -i -E 's/access_ok\s*\(/access_ok(0, /g' "$FILE_KPM"
+          # Cari lokasi file kpm.c secara otomatis (mengantisipasi beda folder)
+          KPM_FILE=$(find . -name "kpm.c" -type f | head -n 1)
+          KSU_FILE=$(find . -name "ksu.c" -type f | head -n 1)
+
+          if [ -z "$KPM_FILE" ]; then
+            echo "❌ ERROR: Could not find kpm.c!"
+            exit 1
           else
-            echo "⚠️ Warning: $FILE_KPM not found."
+            echo "✅ Found kpm.c at: $KPM_FILE"
+            
+            # 1. FIX access_ok (Menambah argumen 0)
+            # Kita lakukan replace berulang untuk memastikan semua kena
+            echo "   - Patching access_ok..."
+            sed -i 's/access_ok(/access_ok(0, /g' "$KPM_FILE"
+            sed -i 's/access_ok (/access_ok(0, /g' "$KPM_FILE"
           fi
 
-          # --- PATCH 2: Hapus MODULE_IMPORT_NS (Fitur Kernel 5.4+) ---
-          FILE_KSU="drivers/kernelsu/ksu.c"
-          if [ -f "$FILE_KSU" ]; then
-             echo "Removing MODULE_IMPORT_NS from $FILE_KSU..."
-             # Menghapus baris yang mengandung MODULE_IMPORT_NS
-             sed -i '/MODULE_IMPORT_NS/d' "$FILE_KSU"
+          if [ -z "$KSU_FILE" ]; then
+             echo "⚠️ Warning: ksu.c not found (skipped)."
           else
-             echo "⚠️ Warning: $FILE_KSU not found."
+             echo "✅ Found ksu.c at: $KSU_FILE"
+             
+             # 2. FIX MODULE_IMPORT_NS (Hapus fitur kernel baru)
+             echo "   - Removing MODULE_IMPORT_NS..."
+             sed -i '/MODULE_IMPORT_NS/d' "$KSU_FILE"
+             
+             # 3. FIX error 'missing type specifier' di ksu.c (jika ada)
+             # Kadang error ini muncul karena header VFS_internal tidak terdefinisi
+             sed -i '/VFS_internal_I_am_really/d' "$KSU_FILE"
           fi
           
-          echo "✅ Patching complete."
-
-
-      # --- BAGIAN UPLOAD KE REPO (Sesuai request sebelumnya) ---
-      - name: Commit & Push SukiSU Integration
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add .
-          if [[ -n $(git status -s) ]]; then
-            git commit -m "chore: Integrate SukiSU Ultra & Fix Compat [skip ci]"
-            git push origin main
-          else
-            echo "No changes detected."
-          fi
+          echo "✅ All patches applied."
 
       # Langkah 5: Unduh Toolchain Clang
       - name: Download Clang Toolchain
@@ -95,7 +93,8 @@ jobs:
       # Langkah 8: Kompilasi Kernel
       - name: Compile Kernel
         run: |
-          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1
+          # Menggunakan LLVM=1 dan mematikan error warning agar tidak stop
+          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1
 
       # Langkah 9: Upload
       - name: Upload Kernel Artifact
