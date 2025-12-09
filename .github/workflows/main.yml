@@ -27,54 +27,10 @@ jobs:
           sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex gcc-aarch64-linux-gnu
 
       # Langkah 3: Integrasi SukiSU-Ultra
-      - name: Integrate SukiSU Ultra
-        run: |
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+      #- name: Integrate SukiSU Ultra
+      #  run: |
+      #    curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
-      # --- LANGKAH 4: DISABLE KPM & FIX CORE (PENTING) ---
-      - name: Disable KPM & Fix Compatibility
-        run: |
-          echo "🔧 Starting configuration to DISABLE KPM..."
-
-          # 1. Cari Makefile milik KernelSU/SukiSU
-          # Kita cari file Makefile yang berada di dalam folder drivers/kernelsu (atau variannya)
-          KSU_MAKEFILE=$(find drivers -path "*/kernelsu/Makefile" -type f | head -n 1)
-
-          if [ -z "$KSU_MAKEFILE" ]; then
-            echo "❌ ERROR: Could not find KernelSU Makefile!"
-            # Kita coba cari lebih luas jika path drivers salah
-            KSU_MAKEFILE=$(find . -name "Makefile" | xargs grep -l "kernelsu" | head -n 1)
-          fi
-
-          if [ -n "$KSU_MAKEFILE" ]; then
-            echo "✅ Found Makefile at: $KSU_MAKEFILE"
-            
-            # --- ACTION: DISABLE KPM ---
-            # Cari baris yang mencoba compile folder 'kpm' dan matikan dengan komentar (#)
-            # Biasanya tertulis: obj-y += kpm/
-            echo "   - Disabling KPM compilation in Makefile..."
-            sed -i '/kpm\//s/^/#/' "$KSU_MAKEFILE"
-            sed -i '/CONFIG_KSU_KPM/s/^/#/' "$KSU_MAKEFILE"
-          else
-             echo "⚠️ Warning: Makefile not found, skipping KPM disable (might fail later)."
-          fi
-
-          # 2. Fix Core KernelSU (ksu.c) - Masalah MODULE_IMPORT_NS (Gambar 4)
-          # Ini WAJIB dilakukan meskipun KPM mati, karena ksu.c adalah intinya.
-          KSU_C_FILE=$(find . -name "ksu.c" -type f | head -n 1)
-          
-          if [ -z "$KSU_C_FILE" ]; then
-             echo "⚠️ Warning: ksu.c not found."
-          else
-             echo "✅ Found ksu.c at: $KSU_C_FILE"
-             echo "   - Removing MODULE_IMPORT_NS (New Kernel Feature)..."
-             sed -i '/MODULE_IMPORT_NS/d' "$KSU_C_FILE"
-             
-             echo "   - Removing VFS_internal references..."
-             sed -i '/VFS_internal/d' "$KSU_C_FILE"
-          fi
-          
-          echo "✅ Configuration complete. KPM is disabled
 
       # Langkah 5: Unduh Toolchain Clang
       - name: Download Clang Toolchain
