@@ -94,7 +94,7 @@ jobs:
       - name: Compile Kernel
         run: |
           # Menggunakan LLVM=1 dan mematikan error warning agar tidak stop
-          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1
+          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1
 
       # Langkah 9: Upload
       - name: Upload Kernel Artifact
