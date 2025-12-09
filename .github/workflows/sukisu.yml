@@ -1,0 +1,46 @@
+name: 1. Setup SukiSU & Push to Repo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup_and_push:
+    name: Download SukiSU & Push
+    runs-on: self-hosted
+    permissions:
+      contents: write  # Wajib ada agar bisa push
+
+    steps:
+      # 1. Checkout dengan token khusus agar bisa push balik
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true # Kita butuh ini true agar token tersimpan untuk push
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. Jalankan Script SukiSU
+      - name: Run SukiSU Curl Script
+        run: |
+          echo "Downloading SukiSU..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+
+      # 3. Commit dan Push Hasilnya
+      - name: Commit and Push Changes
+        run: |
+          # Konfigurasi User Git
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # Tambahkan semua file baru (termasuk folder drivers/kernelsu atau KernelSU)
+          git add .
+          
+          # Cek status
+          echo "Status git:"
+          git status
+          
+          # Commit & Push
+          # Kita pakai [skip ci] agar setelah push, dia tidak otomatis memicu build lain (kalau ada trigger push)
+          git commit -m "chore: Add SukiSU files (Manual Setup) [skip ci]" || echo "No changes to commit"
+          git push origin main
