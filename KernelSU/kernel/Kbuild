@@ -33,7 +33,7 @@ ccflags-y += -I$(objtree)/security/selinux -include $(srctree)/include/uapi/asm-
 
 obj-$(CONFIG_KSU) += kernelsu.o
 
-obj-$(CONFIG_KPM) += kpm/
+#obj-$(CONFIG_KPM) += kpm/
 
 REPO_OWNER := SukiSU-Ultra
 REPO_NAME := SukiSU-Ultra
