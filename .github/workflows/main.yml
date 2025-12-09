@@ -31,43 +31,50 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
-      # --- PERBAIKAN TOTAL: PATCH COMPATIBILITY ---
-      - name: Fix KernelSU for Old Kernels
+      # --- LANGKAH 4: DISABLE KPM & FIX CORE (PENTING) ---
+      - name: Disable KPM & Fix Compatibility
         run: |
-          echo "🔍 Searching for kpm.c and ksu.c..."
-          
-          # Cari lokasi file kpm.c secara otomatis (mengantisipasi beda folder)
-          KPM_FILE=$(find . -name "kpm.c" -type f | head -n 1)
-          KSU_FILE=$(find . -name "ksu.c" -type f | head -n 1)
+          echo "🔧 Starting configuration to DISABLE KPM..."
 
-          if [ -z "$KPM_FILE" ]; then
-            echo "❌ ERROR: Could not find kpm.c!"
-            exit 1
-          else
-            echo "✅ Found kpm.c at: $KPM_FILE"
+          # 1. Cari Makefile milik KernelSU/SukiSU
+          # Kita cari file Makefile yang berada di dalam folder drivers/kernelsu (atau variannya)
+          KSU_MAKEFILE=$(find drivers -path "*/kernelsu/Makefile" -type f | head -n 1)
+
+          if [ -z "$KSU_MAKEFILE" ]; then
+            echo "❌ ERROR: Could not find KernelSU Makefile!"
+            # Kita coba cari lebih luas jika path drivers salah
+            KSU_MAKEFILE=$(find . -name "Makefile" | xargs grep -l "kernelsu" | head -n 1)
+          fi
+
+          if [ -n "$KSU_MAKEFILE" ]; then
+            echo "✅ Found Makefile at: $KSU_MAKEFILE"
             
-            # 1. FIX access_ok (Menambah argumen 0)
-            # Kita lakukan replace berulang untuk memastikan semua kena
-            echo "   - Patching access_ok..."
-            sed -i 's/access_ok(/access_ok(0, /g' "$KPM_FILE"
-            sed -i 's/access_ok (/access_ok(0, /g' "$KPM_FILE"
+            # --- ACTION: DISABLE KPM ---
+            # Cari baris yang mencoba compile folder 'kpm' dan matikan dengan komentar (#)
+            # Biasanya tertulis: obj-y += kpm/
+            echo "   - Disabling KPM compilation in Makefile..."
+            sed -i '/kpm\//s/^/#/' "$KSU_MAKEFILE"
+            sed -i '/CONFIG_KSU_KPM/s/^/#/' "$KSU_MAKEFILE"
+          else
+             echo "⚠️ Warning: Makefile not found, skipping KPM disable (might fail later)."
           fi
 
-          if [ -z "$KSU_FILE" ]; then
-             echo "⚠️ Warning: ksu.c not found (skipped)."
+          # 2. Fix Core KernelSU (ksu.c) - Masalah MODULE_IMPORT_NS (Gambar 4)
+          # Ini WAJIB dilakukan meskipun KPM mati, karena ksu.c adalah intinya.
+          KSU_C_FILE=$(find . -name "ksu.c" -type f | head -n 1)
+          
+          if [ -z "$KSU_C_FILE" ]; then
+             echo "⚠️ Warning: ksu.c not found."
           else
-             echo "✅ Found ksu.c at: $KSU_FILE"
+             echo "✅ Found ksu.c at: $KSU_C_FILE"
+             echo "   - Removing MODULE_IMPORT_NS (New Kernel Feature)..."
+             sed -i '/MODULE_IMPORT_NS/d' "$KSU_C_FILE"
              
-             # 2. FIX MODULE_IMPORT_NS (Hapus fitur kernel baru)
-             echo "   - Removing MODULE_IMPORT_NS..."
-             sed -i '/MODULE_IMPORT_NS/d' "$KSU_FILE"
-             
-             # 3. FIX error 'missing type specifier' di ksu.c (jika ada)
-             # Kadang error ini muncul karena header VFS_internal tidak terdefinisi
-             sed -i '/VFS_internal_I_am_really/d' "$KSU_FILE"
+             echo "   - Removing VFS_internal references..."
+             sed -i '/VFS_internal/d' "$KSU_C_FILE"
           fi
           
-          echo "✅ All patches applied."
+          echo "✅ Configuration complete. KPM is disabled
 
       # Langkah 5: Unduh Toolchain Clang
       - name: Download Clang Toolchain
