@@ -101,16 +101,6 @@ config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 	  governor. If unsure have a look at the help section of the
 	  driver. Fallback governor will be the performance governor.
 
-config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
-	bool "interactive"
-	select CPU_FREQ_GOV_INTERACTIVE
-	help
-	  Use the CPUFreq governor 'interactive' as default. This allows
-	  you to get a full dynamic cpu frequency capable system by simply
-	  loading your cpufreq low-level hardware driver, using the
-	  'interactive' governor for latency-sensitive workloads.
-
-
 config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 	bool "schedutil"
 	depends on SMP
@@ -120,6 +110,29 @@ config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 	  Use the 'schedutil' CPUFreq governor by default. If unsure,
 	  have a look at the help section of that governor. The fallback
 	  governor will be 'performance'.
+
+config CPU_FREQ_DEFAULT_GOV_MAXPERF
+	bool "maxperf"
+	select CPU_FREQ_GOV_MAXPERF
+	help
+	  Use the extreme performance governor 'maxperf' as default.
+	  Pushes CPU to maximum speed for overclock and performance.
+	  
+config CPU_FREQ_DEFAULT_GOV_THERMO_BALANCE
+	bool "thermo_balance"
+	select CPU_FREQ_GOV_THERMO_BALANCE
+	help
+	  Use the 'thermo_balance' governor as default.
+	  Balances thermal control and performance dynamically.
+
+	config CPU_FREQ_DEFAULT_GOV_STABILIZER
+		bool "stabilizer"
+		depends on CPU_FREQ_GOV_STABILIZER
+		help
+		  Pilih ini untuk menjadikan sebagai
+		  governor default saat boot. Ini adalah governor kustom
+		  yang menggunakan status layar,
+		  mengatur mode performa dan hemat daya.
 
 endchoice
 
@@ -159,20 +172,6 @@ config CPU_FREQ_GOV_USERSPACE
 	  For details, take a look at <file:Documentation/cpu-freq/>.
 
 	  If in doubt, say Y.
-
-config CPU_FREQ_GOV_INTERACTIVE
-	bool "'interactive' cpufreq policy governor"
-	help
-	  'interactive' - This driver adds a dynamic cpufreq policy governor
-	  designed for latency-sensitive workloads.
-
-	  This governor attempts to reduce the latency of clock
-	  increases so that the system is more responsive to
-	  interactive workloads.
-
-	  For details, take a look at linux/Documentation/cpu-freq.
-
-	  If in doubt, say N.
 
 config CPU_FREQ_GOV_ONDEMAND
 	tristate "'ondemand' cpufreq policy governor"
@@ -216,17 +215,6 @@ config CPU_FREQ_GOV_CONSERVATIVE
 
 	  If in doubt, say N.
 
-config CPU_BOOST
-	tristate "Event base short term CPU freq boost"
-	depends on CPU_FREQ && MTK_SCHED_BOOST 
-	help
-	  This driver boosts the frequency of one or more CPUs based on
-	  various events that might occur in the system. As of now, the
-	  events it reacts to are:
-	  - Migration of important threads from one CPU to another.
-
-	  If in doubt, say N.
-
 config CPU_FREQ_GOV_SCHEDUTIL
 	bool "'schedutil' cpufreq policy governor"
 	depends on CPU_FREQ && SMP
@@ -244,78 +232,53 @@ config CPU_FREQ_GOV_SCHEDUTIL
 
 	  If in doubt, say N.
 
-config CPU_INPUT_BOOST
-	bool "CPU Input Boost"
+config CPU_FREQ_GOV_MAXPERF
+	bool "'maxperf' governor"
+	default y
 	help
-	  Boosts the CPU on touchscreen and touchpad input, and allows for
-	  boosting on other custom events, mainly which is intended to be for
-	  boosting when there is a new frame ready to be rendered to the
-	  display. The boost frequencies for this driver should be set so that
-	  frame drops are near-zero at the boosted frequencies and power
-	  consumption is minimized at said frequency combination.
- 
- if CPU_INPUT_BOOST
- 
-config INPUT_BOOST_DURATION_MS
-	int "Input boost duration"
-	default "100"
-	help
-	  Input boost duration in milliseconds.
- 
-config WAKE_BOOST_DURATION_MS
-	int "Wake boost duration"
-	default "1000"
-	help
-	  Wake boost duration in milliseconds.
- 
-config INPUT_BOOST_FREQ_LP
-	int "Low-power cluster boost freq"
-	default "0"
-	help
-	  Input boost frequency for the low-power CPU cluster.
- 
-config INPUT_BOOST_FREQ_PERF
-	int "Performance cluster boost freq"
-	default "0"
-	help
-	  Input boost frequency for the performance CPU cluster.
- 
-config MAX_BOOST_FREQ_LP
-	int "Low-power cluster max-boost freq"
-	default "0"
-	help
-	  Max-boost frequency for the low-power CPU cluster.
- 
-config MAX_BOOST_FREQ_PERF
-	int "Performance cluster max-boost freq"
-	default "0"
-	help
-	  Max-boost frequency for the performance CPU cluster.
- 
-config MIN_FREQ_LP
-	int "LP cluster min boost to set after boost"
-	default "0"
-	help
-	  Min freq to set for lp cluster when boost is over.
- 
-config MIN_FREQ_PERF
-	int "HP cluster min boost to set after boost"
-	default "0"
-	help
-	  Min freq to set for hp cluster when boost is over.
+	  Extreme performance governor. Always sets maximum frequency.
+	  Designed for overclockers and heavy performance use.
 
-config IDLE_FREQ_LP
-	int "LP cluster min boost to set after screen is off"
-	default "0"
+config CPU_FREQ_GOV_THERMO_BALANCE
+	tristate "'thermo_balance' governor"
+	default n
 	help
-	  Idle freq to set for lp cluster when screen is off.
+	  Adaptive governor balancing performance and temperature.
+	  Helps avoid overheating by reducing frequency under sustained load.
 
-config IDLE_FREQ_PERF
-	int "HP cluster min boost to set after screen is off"
-	default "0"
+config CPU_FREQ_GOV_STABILIZER
+	tristate "'stabilizer' cpufreq governor"
+	depends on CPU_FREQ
 	help
-	  Idle freq to set for hp cluster when screen is off.
-endif
+	  Pilih ini untuk mengaktifkan CPU frequency governor kustom.
+
+	  Ini adalah governor kustom yang dirancang untuk perangkat big.LITTLE
+	  (seperti MT6768) yang menerapkan pembatasan (clamping) kebijakan
+	  frekuensi secara dinamis berdasarkan 3 kondisi: status layar
+	  (on/off) dan daftar aplikasi yang berjalan.
+
+	  Governor ini menerapkan 3 profil berbeda:
+
+	  1. Performa:
+	     Saat beban di atas 85%
+	     semua cluster CPU (big dan LITTLE) akan dikunci ke
+	     frekuensi MAKSIMUM.
+
+	  2. Hemat Daya (Layar MATI):
+	     Saat layar mati, semua cluster CPU (big dan LITTLE) akan
+	     dikunci ke frekuensi MINIMUM untuk mode deepsleep/powersave.
+
+	  3. Default (Layar NYALA):
+	     Saat layar menyala (dan tidak ada aplikasi prioritas yang
+	     berjalan), cluster LITTLE dikembalikan ke rentang frekuensi
+	     penuhnya (untuk perilaku dinamis seperti conservative),
+	     sementara cluster BIG dikunci ke frekuensi MINIMUM
+	     untuk menghemat daya dan mengurangi panas.
+
+	  Jika Anda membangun kernel dengan modifikasi kustom ini,
+	  pilih Y (untuk build-in) atau M (untuk build sebagai modul).
+
+	  Jika Anda ragu, pilih N.
 
 comment "CPU frequency scaling drivers"
 
@@ -350,12 +313,6 @@ config CPUFREQ_DUMMY
 	  nothing.
 
 	  If in doubt, say N
-
-config FINGERPRINT_BOOST
-	bool "Fingerprint Boost"
-	default y
-	help
-	  Boosts available CPUs to max frequency on fingerprint sensor input.
 
 if X86
 source "drivers/cpufreq/Kconfig.x86"

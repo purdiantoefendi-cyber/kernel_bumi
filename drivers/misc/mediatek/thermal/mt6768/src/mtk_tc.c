@@ -174,14 +174,14 @@ static __u32 calefuse1;
 static __u32 calefuse2;
 static __u32 calefuse3;
 
-/**
+/*
  * If curr_temp >= tscpu_polling_trip_temp1, use interval else if cur_temp >=
  * tscpu_polling_trip_temp2 && curr_temp < tscpu_polling_trip_temp1, use
  * interval*tscpu_polling_factor1 else, use interval*tscpu_polling_factor2
  */
-/* chip dependent */
-int tscpu_polling_trip_temp1 = 40000;
-int tscpu_polling_trip_temp2 = 20000;
+/* chip dependent - MODIFIED FOR OC PROFILE */
+int tscpu_polling_trip_temp1 = 50000;    /* Dinaikkan dari 40000 */
+int tscpu_polling_trip_temp2 = 30000;    /* Dinaikkan dari 20000 */
 int tscpu_polling_factor1 = 1;
 int tscpu_polling_factor2 = 4;
 
@@ -190,8 +190,8 @@ int tscpu_polling_factor2 = 4;
  *it means polling_delay will be 1/5 of original interval
  *after mtktscpu reports > 65C w/o exit point
  */
-int fast_polling_trip_temp = 60000;
-int fast_polling_trip_temp_high = 60000; /* deprecaed */
+int fast_polling_trip_temp = 75000;      /* Dinaikkan dari 60000 */
+int fast_polling_trip_temp_high = 75000; /* deprecaed */
 int fast_polling_factor = 2;
 int tscpu_cur_fp_factor = 1;
 int tscpu_next_fp_factor = 1;

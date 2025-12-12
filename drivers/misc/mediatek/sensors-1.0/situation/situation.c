@@ -650,6 +650,8 @@ int situation_register_control_path(struct situation_control_path *ctl,
 	cxt->ctl_context[index].situation_ctl.is_support_batch =
 		ctl->is_support_batch;
 
+        cxt->ws[index] = NULL;
+        /*
 	cxt->wake_lock_name[index] = kzalloc(64, GFP_KERNEL);
 	if (!cxt->wake_lock_name[index])
 		return -1;
@@ -660,7 +662,7 @@ int situation_register_control_path(struct situation_control_path *ctl,
 		pr_err("%s: wakeup source init fail\n", __func__);
 		return -ENOMEM;
 	}
-
+        */
 	return 0;
 }
 
