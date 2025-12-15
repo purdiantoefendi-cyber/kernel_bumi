@@ -15,6 +15,9 @@
 #define SUSFS_VARIANT "GKI"
 #endif
 
+#define TASK_STRUCT_NON_ROOT_USER_APP_PROC (1<<0)
+#define TASK_STRUCT_NON_ROOT_USER_APP_SHELL (1<<1)
+
 /*********/
 /* MACRO */
 /*********/
