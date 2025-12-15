@@ -31,11 +31,6 @@
 #include <linux/rseq.h>
 #include <linux/android_kabi.h>
 
-/* TAMBAHAN UNTUK SUSFS */
-#ifdef CONFIG_KSU_SUSFS
-#include <linux/susfs.h>
-#endif
-
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct backing_dev_info;
