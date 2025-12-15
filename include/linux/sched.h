@@ -31,6 +31,11 @@
 #include <linux/rseq.h>
 #include <linux/android_kabi.h>
 
+/* TAMBAHAN UNTUK SUSFS */
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
+
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct backing_dev_info;
@@ -1344,6 +1349,9 @@ struct task_struct {
 	 * New fields for task_struct should be added above here, so that
 	 * they are included in the randomized portion of task_struct.
 	 */
+#ifdef CONFIG_KSU_SUSFS
+	u32 susfs_task_state;
+#endif
 	randomized_struct_fields_end
 
 	/* CPU-specific state of this task: */
