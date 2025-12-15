@@ -70,6 +70,15 @@
 #include "ebitmap.h"
 #include "audit.h"
 
+#ifdef CONFIG_KSU_SUSFS
+u32 susfs_kernel_sid;
+#endif
+
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/export.h> // Pastikan ada include ini jika belum ada
+EXPORT_SYMBOL(susfs_kernel_sid);
+#endif
+
 /* Policy capability names */
 const char *selinux_policycap_names[__POLICYDB_CAPABILITY_MAX] = {
 	"network_peer_controls",
