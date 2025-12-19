@@ -3072,7 +3072,7 @@ EXPORT_SYMBOL(wake_up_process);
 
 int wake_up_state(struct task_struct *p, unsigned int state)
 {
-	return try_to_wake_up(p, state, 0, 1);
+        return try_to_wake_up(p, state, 0, 1);
 }
 
 #ifdef CONFIG_SCHED_BORE
@@ -3153,7 +3153,7 @@ static void update_child_burst_topological(
 		dec = child;
 		while ((dcnt = count_child_tasks(dec)) == 1)
 			dec = list_first_entry(&dec->children, struct task_struct, sibling);
-		
+
 		if (!dcnt || !depth) {
 			if (!task_is_inheritable(dec)) continue;
 			cnt++;
@@ -3222,7 +3222,8 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.sum_exec_runtime		= 0;
 	p->se.prev_sum_exec_runtime	= 0;
 	p->se.nr_migrations		= 0;
-	p->se.vruntime			= 0;
+	p->se.vruntime                  = 0;
+        p->last_sleep_ts	        = 0;
 #ifdef CONFIG_SCHED_BORE
 	sched_fork_bore(p);
 #endif // CONFIG_SCHED_BORE
@@ -3469,6 +3470,13 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 #endif
 	return 0;
 }
+
+#ifdef CONFIG_SCHED_BORE
+void sched_post_fork(struct task_struct *p)
+{
+	sched_post_fork_bore(p);
+}
+#endif // CONFIG_SCHED_BORE
 
 void sched_post_fork(struct task_struct *p)
 {

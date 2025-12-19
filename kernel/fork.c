@@ -2215,6 +2215,9 @@ static __latent_entropy struct task_struct *copy_process(
 		fd_install(pidfd, pidfile);
 
 	proc_fork_connector(p);
+#ifdef CONFIG_SCHED_BORE
+	sched_post_fork(p);
+#endif // CONFIG_SCHED_BORE
 	sched_post_fork(p);
 	cgroup_post_fork(p);
 	perf_event_fork(p);
