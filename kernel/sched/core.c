@@ -3478,15 +3478,6 @@ void sched_post_fork(struct task_struct *p)
 }
 #endif // CONFIG_SCHED_BORE
 
-void sched_post_fork(struct task_struct *p)
-{
-	uclamp_post_fork(p);
-
-#ifdef CONFIG_SCHED_BORE
-	sched_post_fork_bore(p);
-#endif // CONFIG_SCHED_BORE
-}
-
 unsigned long to_ratio(u64 period, u64 runtime)
 {
 	if (runtime == RUNTIME_INF)
