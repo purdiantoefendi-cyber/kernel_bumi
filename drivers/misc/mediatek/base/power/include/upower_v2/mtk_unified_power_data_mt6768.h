@@ -1706,4 +1706,3 @@ struct upower_tbl upower_tbl_cci_G75 = {
 #endif /* UNIFIED_POWER_DATA_H */
 
 
-
