@@ -31,9 +31,6 @@
 #include <linux/ima.h>
 #include <linux/dnotify.h>
 #include <linux/compat.h>
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-#include <linux/susfs_def.h>
-#endif
 
 #include "internal.h"
 #include <trace/hooks/syscall_check.h>
@@ -347,10 +344,11 @@ int ksys_fallocate(int fd, int mode, loff_t offset, loff_t len)
 	return error;
 }
 
-SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
-{
-	return ksys_fallocate(fd, mode, offset, len);
-}
+#ifdef CONFIG_KSU
+__attribute__((hot)) 
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+				int *mode, int *flags);
+#endif
 
 /*
  * access() needs to use the real uid/gid, not the effective uid/gid.
@@ -366,7 +364,9 @@ long do_faccessat(int dfd, const char __user *filename, int mode)
 	struct vfsmount *mnt;
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
-
+#ifdef CONFIG_KSU
+	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+#endif
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
 
