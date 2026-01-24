@@ -241,6 +241,7 @@ int susfs_get_data_path(struct path *path) {
 
 /* sus_mount */
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+static DEFINE_SPINLOCK(susfs_spin_lock_sus_mount);
 bool susfs_hide_sus_mnts_for_non_su_procs = true; // hide sus mounts for all processes by default
 
 void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info) {
@@ -250,8 +251,9 @@ void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info) {
 		info.err = -EFAULT;
 		goto out_copy_to_user;
 	}
-
-	WRITE_ONCE(susfs_hide_sus_mnts_for_non_su_procs, info.enabled);
+	spin_lock(&susfs_spin_lock_sus_mount);
+	susfs_hide_sus_mnts_for_non_su_procs = info.enabled;
+	spin_unlock(&susfs_spin_lock_sus_mount);
 	SUSFS_LOGI("susfs_hide_sus_mnts_for_non_su_procs: %d\n", info.enabled);
 	info.err = 0;
 out_copy_to_user:
