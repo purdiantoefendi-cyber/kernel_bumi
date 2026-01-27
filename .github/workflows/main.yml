@@ -19,6 +19,17 @@ jobs:
           fetch-depth: 0   # penting agar bisa ambil history penuh
           submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
 
+      # Tambahan: Pastikan skrip build executable (memperbaiki "Permission denied")
+      - name: Make build scripts executable
+        run: |
+          if [ -d scripts ]; then
+            find scripts -type f -name "*.sh" -exec chmod +x {} \;
+          fi
+          # juga periksa scripts/kconfig jika ada
+          if [ -d scripts/kconfig ]; then
+            find scripts/kconfig -type f -name "*.sh" -exec chmod +x {} \;
+          fi
+
       # Langkah 2: Install Dependensi
       - name: Install Dependencies
         run: |
