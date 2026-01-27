@@ -1,0 +1,61 @@
+name: Build Kernel by purdiantoefendi-cyber (Smart Build)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Kernel by ${{ github.actor }}
+    runs-on: self-hosted
+    permissions:
+      contents: write
+
+    steps:
+      # Langkah 1: Checkout Kode Sumber
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          ref: main   # branch kamu
+          fetch-depth: 0   # penting agar bisa ambil history penuh
+          submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
+
+      # Langkah 2: Install Dependensi
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex gcc-aarch64-linux-gnu
+
+      # Langkah 5: Unduh Toolchain Clang
+      - name: Download Clang Toolchain
+        run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
+
+      # Langkah 6: Atur Environment Build
+      - name: Set Up Build Environment
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=DianTk_Modz_sukiSU" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "${{ github.workspace }}/clang-toolchain/bin" >> $GITHUB_PATH
+
+      # Langkah 7: Buat .config
+      - name: Generate .config
+        run: make O=out earth_defconfig
+
+      # Langkah 8: Kompilasi Kernel
+      - name: Compile Kernel
+        run: |
+          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1
+
+      # Langkah 9: Upload
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build
+          path: |
+            out/arch/arm64/boot/Image.gz*
+            out/arch/arm64/boot/dts/**/*.dtb
