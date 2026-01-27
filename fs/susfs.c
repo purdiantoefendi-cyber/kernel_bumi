@@ -51,6 +51,65 @@ static DEFINE_MUTEX(susfs_mutex_lock_sus_path);
 static LIST_HEAD(LH_SUS_PATH_LOOP);
 const struct qstr susfs_fake_qstr_name = QSTR_INIT("..5.u.S", 7); // used to re-test the dcache lookup, make sure you don't have file named like this!!
 
+void susfs_set_i_state_on_external_dir(void __user **user_info) {
+	struct path path;
+	struct inode *inode = NULL;
+	static struct st_external_dir info = {0};
+
+	if (copy_from_user(&info, (struct st_external_dir __user*)*user_info, sizeof(info))) {
+		info.err = -EFAULT;
+		goto out_copy_to_user;
+	}
+
+	info.err = kern_path(info.target_pathname, LOOKUP_FOLLOW, &path);
+	if (info.err) {
+		SUSFS_LOGE("Failed opening file '%s'\n", info.target_pathname);
+		goto out_copy_to_user;
+	}
+
+	inode = d_inode(path.dentry);
+	if (!inode) {
+		info.err = -EINVAL;
+		goto out_path_put_path;
+	}
+	
+	if (info.cmd == CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH) {
+		spin_lock(&inode->i_lock);
+		set_bit(AS_FLAGS_ANDROID_DATA_ROOT_DIR, &inode->i_state);
+		spin_unlock(&inode->i_lock);
+		strncpy(android_data_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
+		android_data_path.is_inited = true;
+		android_data_path.cmd = CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH;
+		SUSFS_LOGI("Set android data root dir: '%s', i_mapping: '0x%p'\n",
+			android_data_path.target_pathname, inode->i_mapping);
+		info.err = 0;
+	} else if (info.cmd == CMD_SUSFS_SET_SDCARD_ROOT_PATH) {
+		spin_lock(&inode->i_lock);
+		set_bit(AS_FLAGS_SDCARD_ROOT_DIR, &inode->i_state);
+		spin_unlock(&inode->i_lock);
+		strncpy(sdcard_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);
+		sdcard_path.is_inited = true;
+		sdcard_path.cmd = CMD_SUSFS_SET_SDCARD_ROOT_PATH;
+		SUSFS_LOGI("Set sdcard root dir: '%s', i_mapping: '0x%p'\n",
+			sdcard_path.target_pathname, inode->i_mapping);
+		info.err = 0;
+	} else {
+		info.err = -EINVAL;
+	}
+
+out_path_put_path:
+	path_put(&path);
+out_copy_to_user:
+	if (copy_to_user(&((struct st_external_dir __user*)*user_info)->err, &info.err, sizeof(info.err))) {
+		info.err = -EFAULT;
+	}
+	if (info.cmd == CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH) {
+		SUSFS_LOGI("CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH -> ret: %d\n", info.err);
+	} else if (info.cmd == CMD_SUSFS_SET_SDCARD_ROOT_PATH) {
+		SUSFS_LOGI("CMD_SUSFS_SET_SDCARD_ROOT_PATH -> ret: %d\n", info.err);
+	}
+}
+
 void susfs_add_sus_path(void __user **user_info) {
 	struct st_susfs_sus_path info = {0};
 	struct path path;
@@ -90,9 +149,10 @@ void susfs_add_sus_path(void __user **user_info) {
 		goto out_path_put_path;
 	}
 
+	spin_lock(&inode->i_lock);
 	set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
-	SUSFS_LOGI("flagged AS_FLAGS_SUS_PATH on pathname: '%s', ino: '%lu', inode->i_state: 0x%lx\n",
-				info.target_pathname, inode->i_ino, inode->i_state);
+	spin_unlock(&inode->i_lock);
+	SUSFS_LOGI("pathname: '%s', ino: '%lu', is flagged as AS_FLAGS_SUS_PATH\n", info.target_pathname, info.target_ino);
 	info.err = 0;
 out_path_put_path:
 	path_put(&path);
@@ -126,10 +186,15 @@ void susfs_add_sus_path_loop(void __user **user_info) {
 	strncpy(new_list->info.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
 	strncpy(new_list->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
 	INIT_LIST_HEAD(&new_list->list);
-	mutex_lock(&susfs_mutex_lock_sus_path);
-	list_add_tail_rcu(&new_list->list, &LH_SUS_PATH_LOOP);
-	mutex_unlock(&susfs_mutex_lock_sus_path);
-	SUSFS_LOGI("target_pathname: '%s', is successfully added to LH_SUS_PATH_LOOP\n", new_list->target_pathname);
+	spin_lock(&susfs_spin_lock_sus_path);
+	list_add_tail(&new_list->list, &LH_SUS_PATH_LOOP);
+	spin_unlock(&susfs_spin_lock_sus_path);
+	SUSFS_LOGI("target_ino: '%lu', target_pathname: '%s', i_uid: '%u', is successfully added to LH_SUS_PATH_LOOP\n",
+				new_list->info.target_ino, new_list->target_pathname, new_list->info.i_uid);
+	spin_lock(&inode->i_lock);
+	set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
+	spin_unlock(&inode->i_lock);
+	SUSFS_LOGI("pathname: '%s', ino: '%lu', is flagged as AS_FLAGS_SUS_PATH\n", info.target_pathname, info.target_ino);
 	info.err = 0;
 out_copy_to_user:
 	if (copy_to_user(&((struct st_susfs_sus_path __user*)*user_info)->err, &info.err, sizeof(info.err))) {
@@ -146,31 +211,12 @@ static void susfs_run_sus_path_loop(void) {
 	const struct cred *saved = override_creds(ksu_cred);
 	int srcu_idx = srcu_read_lock(&susfs_srcu_sus_path_loop);
 
-	list_for_each_entry_rcu(cursor, &LH_SUS_PATH_LOOP, list) {
-		if (!kern_path(cursor->target_pathname, 0, &path))
-		{
-			inode = d_backing_inode(path.dentry);
-			if (!inode) {
-				SUSFS_LOGE("inode is NULL\n");
-				path_put(&path);
-				continue;
-			}
-			if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
-				fi = get_fuse_inode(inode);
-				if (!fi) {
-					SUSFS_LOGE("fi is NULL\n");
-					path_put(&path);
-					continue;
-				}
-				set_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_state);
-				set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
-				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', fi->inode.i_ino: '%lu', fi->inode.i_state: 0x%lx\n",
-						cursor->target_pathname, fi->inode.i_ino, fi->inode.i_state);
-			} else {
-				set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
-				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', inode->i_ino: '%lu', inode->i_state: 0x%lx\n",
-						cursor->target_pathname, inode->i_ino, inode->i_state);
-			}
+	list_for_each_entry(cursor, &LH_SUS_PATH_LOOP, list) {
+		if (!kern_path(cursor->target_pathname, 0, &path)) {
+			inode = path.dentry->d_inode;
+			spin_lock(&inode->i_lock);
+			set_bit(AS_FLAGS_SUS_PATH, &inode->i_state);
+			spin_unlock(&inode->i_lock);
 			path_put(&path);
 		}
 	}
@@ -179,52 +225,84 @@ static void susfs_run_sus_path_loop(void) {
 }
 
 static inline bool is_i_uid_not_allowed(uid_t i_uid) {
-	return likely(current_uid().val != i_uid);
+	return (likely(susfs_is_current_proc_umounted()) &&
+		unlikely(current_uid().val != i_uid));
+}
+
+bool susfs_is_base_dentry_android_data_dir(struct dentry* base) {
+	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_state & BIT_ANDROID_DATA_ROOT_DIR));
+}
+
+bool susfs_is_base_dentry_sdcard_dir(struct dentry* base) {
+	return (base && !IS_ERR(base) && base->d_inode && (base->d_inode->i_state & BIT_ANDROID_SDCARD_ROOT_DIR));
+}
+
+bool susfs_is_sus_android_data_d_name_found(const char *d_name) {
+	struct st_susfs_sus_path_list *cursor = NULL;
+
+	if (d_name[0] == '\0') {
+		return false;
+	}
+
+	list_for_each_entry(cursor, &LH_SUS_PATH_ANDROID_DATA, list) {
+		// - we use strstr here because we cannot retrieve the dentry of fuse_dentry
+		//   and attacker can still use path travesal attack to detect the path, but
+		//   lucky we can check for the uid so it won't let them fool us
+		if (!strncmp(d_name, cursor->info.target_pathname, cursor->path_len) &&
+		    (d_name[cursor->path_len] == '\0' || d_name[cursor->path_len] == '/') &&
+			is_i_uid_in_android_data_not_allowed(cursor->info.i_uid))
+		{
+			SUSFS_LOGI("hiding path '%s'\n", cursor->target_pathname);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool susfs_is_sus_sdcard_d_name_found(const char *d_name) {
+	struct st_susfs_sus_path_list *cursor = NULL;
+
+	if (d_name[0] == '\0') {
+		return false;
+	}
+	list_for_each_entry(cursor, &LH_SUS_PATH_SDCARD, list) {
+		if (!strncmp(d_name, cursor->info.target_pathname, cursor->path_len) &&
+		    (d_name[cursor->path_len] == '\0' || d_name[cursor->path_len] == '/') &&
+			is_i_uid_in_sdcard_not_allowed())
+		{
+			SUSFS_LOGI("hiding path '%s'\n", cursor->target_pathname);
+			return true;
+		}
+	}
+	return false;
 }
 
 /* - Please note that path inside /sdcard will be still visible to MediaProvider module,
  *   since the uid of path like /sdcard/TWRP will be the uid of your MediaProvider module.
  */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode)
-#else
-bool susfs_is_inode_sus_path(struct inode *inode)
-#endif
-{
-	struct fuse_inode *fi = NULL;
-	if (!susfs_is_current_proc_umounted_app()) {
-		return false;
-	}
-	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
-		fi = get_fuse_inode(inode);
-		if (!fi) {
-			SUSFS_LOGE("fi is NULL\n");
-			return false;
-		}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_state) &&
-			is_i_uid_not_allowed(i_uid_into_vfsuid(idmap, &fi->inode).val)))
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_state) &&
-			is_i_uid_not_allowed(i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode).val)))
-#else
-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_state) &&
-			is_i_uid_not_allowed(fi->inode.i_uid.val)))
-#endif
-		{
-			SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
-			return true;
-		}
-		return false;
-	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_state) &&
+bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode) {
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(i_uid_into_vfsuid(idmap, inode).val)))
+	{
+		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+		return true;
+	}
+	return false;
+}
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_state) &&
+bool susfs_is_inode_sus_path(struct inode *inode) {
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(i_uid_into_mnt(i_user_ns(inode), inode).val)))
+	{
+		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+		return true;
+	}
+	return false;
+}
 #else
-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_state) &&
+bool susfs_is_inode_sus_path(struct inode *inode) {
+	if (unlikely(inode->i_state & BIT_SUS_PATH &&
 		is_i_uid_not_allowed(inode->i_uid.val)))
 #endif
 	{
@@ -287,20 +365,10 @@ static int susfs_mark_inode_sus_kstat(char *target_pathname, struct st_susfs_sus
 		goto out_path_put_path;
 	}
 
-	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
-		fi = get_fuse_inode(inode);
-		if (!fi) {
-			SUSFS_LOGE("fi is NULL\n");
-			err = -ENOENT;
-			goto out_path_put_path;
-		}
-		set_bit(AS_FLAGS_SUS_KSTAT, &fi->inode.i_state);
-		new_entry->is_fuse = true;
-		new_entry->target_dev = fi->inode.i_sb->s_dev;
-		SUSFS_LOGI("flagged AS_FLAGS_SUS_KSTAT on pathname: '%s', is_fuse: %d, fi->inode.i_sb->s_dev: %u, fi->nodeid: %llu, fi->inode.i_ino: %lu, fi->inode.i_state: 0x%lx\n",
-					target_pathname, new_entry->is_fuse, fi->inode.i_sb->s_dev, fi->nodeid, fi->inode.i_ino, fi->inode.i_state);
-		err = 0;
-		goto out_path_put_path;
+	if (!(inode->i_state & BIT_SUS_KSTAT)) {
+		spin_lock(&inode->i_lock);
+		set_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state);
+		spin_unlock(&inode->i_lock);
 	}
 
 	set_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state);
@@ -801,7 +869,33 @@ int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 static DEFINE_MUTEX(susfs_mutex_lock_open_redirect);
 static DEFINE_HASHTABLE(OPEN_REDIRECT_HLIST, 10);
-DEFINE_STATIC_SRCU(susfs_srcu_open_redirect);
+
+static int susfs_update_open_redirect_inode(struct st_susfs_open_redirect_hlist *new_entry) {
+	struct path path_target;
+	struct inode *inode_target;
+	int err = 0;
+
+	err = kern_path(new_entry->target_pathname, LOOKUP_FOLLOW, &path_target);
+	if (err) {
+		SUSFS_LOGE("Failed opening file '%s'\n", new_entry->target_pathname);
+		return err;
+	}
+
+	inode_target = d_inode(path_target.dentry);
+	if (!inode_target) {
+		SUSFS_LOGE("inode_target is NULL\n");
+		err = -EINVAL;
+		goto out_path_put_target;
+	}
+
+	spin_lock(&inode_target->i_lock);
+	set_bit(AS_FLAGS_OPEN_REDIRECT, &inode_target->i_state);
+	spin_unlock(&inode_target->i_lock);
+
+out_path_put_target:
+	path_put(&path_target);
+	return err;
+}
 
 void susfs_add_open_redirect(void __user **user_info) {
 	struct st_susfs_open_redirect info = {0};
@@ -1160,7 +1254,10 @@ void susfs_add_sus_map(void __user **user_info) {
 		info.err = -ENOENT;
 		goto out_path_put_path;
 	}
+	inode = d_inode(path.dentry);
+	spin_lock(&inode->i_lock);
 	set_bit(AS_FLAGS_SUS_MAP, &inode->i_state);
+	spin_unlock(&inode->i_lock);
 	SUSFS_LOGI("pathname: '%s', is flagged as AS_FLAGS_SUS_MAP\n", info.target_pathname);
 	info.err = 0;
 out_path_put_path:
