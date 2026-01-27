@@ -3,10 +3,19 @@ if BLOCK
 
 menu "IO Schedulers"
 
+config IOSCHED_PERFORMANCE
+    tristate "Performance I/O scheduler"
+    default y
+
 config IOSCHED_NOOP
 	bool
 	default y
-
+	---help---
+	  The no-op I/O scheduler is a minimal scheduler that does basic merging
+	  and sorting. Its main uses include non-disk based block devices like
+	  memory devices, and specialised software or hardware environments
+	  that do their own scheduling and require only minimal assistance from
+	  the kernel.
 
 config IOSCHED_DEADLINE
 	tristate "Deadline I/O scheduler"
@@ -16,6 +25,10 @@ config IOSCHED_DEADLINE
 	  CSCAN service with FIFO expiration of requests, switching to
 	  a new point in the service tree and doing a batch of IO from there
 	  in case of expiry.
+
+#config IOSCHED_GAMER
+#    tristate "Gamer I/O scheduler"
+#    default y
 
 config IOSCHED_CFQ
 	tristate "CFQ I/O scheduler"
@@ -35,17 +48,10 @@ config CFQ_GROUP_IOSCHED
 	---help---
 	  Enable group IO scheduling in CFQ.
 
-config IOSCHED_ZEN
-	tristate "Zen I/O scheduler"
-	default y
-	---help---
-	  FCFS, dispatches are back-inserted, deadlines ensure fairness.
-	  Should work best with devices where there is no travel delay.
-
 choice
 
 	prompt "Default I/O scheduler"
-	default DEFAULT_ZEN
+	default DEFAULT_CFQ
 	help
 	  Select the I/O scheduler which will be used by default for all
 	  block devices.
@@ -59,9 +65,6 @@ choice
 	config DEFAULT_NOOP
 		bool "No-op"
 
-	config DEFAULT_ZEN
-		bool "ZEN" if IOSCHED_ZEN=y
-
 endchoice
 
 config DEFAULT_IOSCHED
@@ -69,7 +72,6 @@ config DEFAULT_IOSCHED
 	default "deadline" if DEFAULT_DEADLINE
 	default "cfq" if DEFAULT_CFQ
 	default "noop" if DEFAULT_NOOP
-	default "zen" if DEFAULT_ZEN
 
 config MQ_IOSCHED_DEADLINE
 	tristate "MQ deadline I/O scheduler"
@@ -85,20 +87,6 @@ config MQ_IOSCHED_KYBER
 	  multiqueue and other fast devices. Given target latencies for reads and
 	  synchronous writes, it will self-tune queue depths to achieve that
 	  goal.
-
-config MQ_IOSCHED_SSG
-	tristate "SamSung Generic I/O scheduler"
-	default n
-	---help---
-	  SamSung Generic IO scheduler.
-
-config MQ_IOSCHED_SSG_CGROUP
-	tristate "Control Group for SamSung Generic I/O scheduler"
-	default n
-	depends on BLK_CGROUP
-	depends on MQ_IOSCHED_SSG
-	---help---
-	  Control Group for SamSung Generic IO scheduler.
 
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
