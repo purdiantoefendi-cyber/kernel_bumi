@@ -1,46 +1,41 @@
-name: Force Push Specific Commits
+name: Force Push Commits (Fixed Branch Name)
 
 on:
-  workflow_dispatch: # Dijalankan manual
+  workflow_dispatch:
 
 jobs:
   force-apply-commits:
-    # Menggunakan runner self-hosted sesuai permintaan
     runs-on: self-hosted
-    
     permissions:
-      contents: write # Wajib untuk push
+      contents: write
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Wajib 0 untuk mengambil semua history commit
+          fetch-depth: 0
 
       - name: Konfigurasi Git User
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          # Tambahkan safe directory untuk menghindari error di self-hosted
           git config --global --add safe.directory '*'
 
       - name: Proses Cherry-Pick dan Force Push
         run: |
-          # 1. Pastikan kita punya data terbaru dari remote
+          # 1. Fetch data terbaru
           git fetch origin
 
-          # 2. Pindah ke branch 'abreuzz' (atau buat baru jika belum ada)
-          #    Kita reset hard ke origin/abreuzz agar bersih sebelum di-timpa
-          if git show-ref --verify --quiet refs/remotes/origin/abreuzz; then
-            git checkout -B abreuzz origin/abreuzz
+          # 2. Pindah ke branch 'Aberuzz' (PENTING: Huruf A Besar)
+          #    Kita reset hard agar bersih sebelum ditimpa
+          if git show-ref --verify --quiet refs/remotes/origin/Aberuzz; then
+            git checkout -B Aberuzz origin/Aberuzz
           else
-            git checkout -b abreuzz
+            # Jika branch belum ada, buat baru dengan nama Aberuzz
+            git checkout -b Aberuzz
           fi
 
-          # 3. DAFTAR COMMIT YANG AKAN DI-PUSH (Sesuai urutan link kamu)
-          #    Urutan sangat penting! Pastikan urutannya dari yang terlama ke terbaru
-          #    atau sesuai urutan logis perubahan.
-          
+          # 3. DAFTAR COMMIT
           COMMITS=(
             "567715762dac5fe99527a030e9c68ec33ae9137b"
             "2989a71f2a78d4233bc396b6db1565c870a08d6a"
@@ -48,18 +43,12 @@ jobs:
             "34083a8c288744fc24ac04bfbbbc81f1467272ae"
           )
 
-          # 4. Loop untuk Cherry-pick dengan mode "REPLACE" (Overwrite)
+          # 4. Cherry-pick Loop
           for commit in "${COMMITS[@]}"; do
             echo "Applying commit: $commit"
-            
-            # --strategy=recursive -X theirs : 
-            # Artinya jika ada konflik file, PAKSA pakai file dari commit (replace/overwrite).
-            # --allow-empty : Agar tidak error jika perubahan sudah ada.
-            # --keep-redundant-commits : Tetap apply meski terlihat sama.
-            
             git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits $commit
           done
 
-          # 5. Push paksa ke remote
-          echo "Pushing to origin/abreuzz..."
+          # 5. Push ke branch Aberuzz (A Besar)
+          echo "Pushing to origin/Aberuzz..."
           git push origin Aberuzz --force
