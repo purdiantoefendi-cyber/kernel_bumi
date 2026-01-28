@@ -62,4 +62,4 @@ jobs:
 
           # 5. Push paksa ke remote
           echo "Pushing to origin/abreuzz..."
-          git push origin aberuzz --force
+          git push origin Aberuzz --force
