@@ -1,0 +1,37 @@
+name: Import AbrezzPjkt to Branch Aberuzz
+
+on:
+  workflow_dispatch: # Dijalankan manual lewat tab Actions
+
+jobs:
+  import-job:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Izin wajib untuk push branch baru
+
+    steps:
+      - name: Checkout Repo Kamu
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Wajib 0 untuk fetch history penuh
+
+      - name: Konfigurasi Git User
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+      - name: Proses Import Branch
+        run: |
+          # 1. Tambahkan remote repo Abreuzzs
+          git remote add target_repo https://github.com/Abreuzzs/AbrezzPjkt_Earth.git
+          
+          # 2. Fetch branch 'Master' dari repo tersebut
+          # Catatan: Jika error "couldn't find remote ref Master", 
+          # kemungkinan nama aslinya huruf kecil 'master'.
+          git fetch target_repo Master
+          
+          # 3. Buat branch lokal baru 'Aberuzz' yang isinya copy dari 'target_repo/Master'
+          git checkout -b Aberuzz target_repo/Master
+          
+          # 4. Push branch 'Aberuzz' ke repo kamu
+          git push origin Aberuzz
