@@ -1,4 +1,4 @@
-name: Build Kernel by purdiantoefendi-cyber (Smart Build)
+name: Build Kernel run-on ubuntu by purdiantoefendi-cyber (Smart Build)
 
 on:
   workflow_dispatch:
