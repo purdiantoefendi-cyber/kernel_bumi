@@ -15,54 +15,47 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          ref: main   # branch kamu
-          fetch-depth: 0   # penting agar bisa ambil history penuh
-          submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
 
-      # Tambahan: Pastikan skrip build executable (memperbaiki "Permission denied")
-      - name: Make build scripts executable
-        run: |
-          if [ -d scripts ]; then
-            find scripts -type f -name "*.sh" -exec chmod +x {} \;
-          fi
-          # juga periksa scripts/kconfig jika ada
-          if [ -d scripts/kconfig ]; then
-            find scripts/kconfig -type f -name "*.sh" -exec chmod +x {} \;
-          fi
-
-      # Langkah 2: Install Dependensi
+      # Langkah 2: Install Dependensi (DITAMBAH GCC ARM 32-BIT)
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex gcc-aarch64-linux-gnu
+          sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-      # Langkah 5: Unduh Toolchain Clang
+      # Langkah 3: Unduh Toolchain Clang
       - name: Download Clang Toolchain
         run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
 
-      # Langkah 6: Atur Environment Build
-      - name: Set Up Build Environment
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=DianTk_Modz_sukiSU" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/clang-toolchain/bin" >> $GITHUB_PATH
-
-      # Langkah 7: Buat .config
-      - name: Generate .config
-        run: make O=out earth_defconfig
-
-      # Langkah 8: Kompilasi Kernel
+      # Langkah 4: Compile Kernel (DIOPTIMALKAN)
       - name: Compile Kernel
         run: |
-          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1
+          # Set Path Clang
+          export PATH="${{ github.workspace }}/clang-toolchain/bin:$PATH"
+          
+          # Definisi Variabel Make agar rapi dan terbaca
+          args="O=out \
+          ARCH=arm64 \
+          SUBARCH=arm64 \
+          CC=clang \
+          LD=ld.lld \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          LLVM=1"
 
-      # Langkah 9: Upload
+          echo "Starting Build Configuration..."
+          # Masukkan args saat generate config juga
+          make $args earth_defconfig
+          
+          echo "Starting Kernel Compilation..."
+          # Tambahkan KCFLAGS untuk menekan warning yang dianggap error
+          make -j$(nproc) $args KCFLAGS="-Wno-error"
+
+      # Langkah 5: Upload
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
