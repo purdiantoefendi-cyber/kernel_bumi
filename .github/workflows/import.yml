@@ -1,33 +1,37 @@
 name: Import AbrezzPjkt to Branch Aberuzz
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Dijalankan manual lewat tab Actions
 
 jobs:
   import-job:
     runs-on: self-hosted
     permissions:
-      contents: write      # Izin untuk push file biasa
-      workflows: write     # Izin KHUSUS untuk push file .github/workflows/
+      contents: write # Izin wajib untuk push branch baru
 
     steps:
       - name: Checkout Repo Kamu
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Wajib 0 untuk fetch history penuh
 
       - name: Konfigurasi Git User
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
 
-      - name: Proses Import Branch
+      - name: Proses Import Tanpa Workflow Asing
         run: |
           git remote add target_repo https://github.com/Abreuzzs/AbrezzPjkt_Earth.git
           git fetch target_repo Master
-          
-          # Buat branch lokal baru
           git checkout -b Aberuzz target_repo/Master
+          
+          # HAPUS file workflow orang lain agar tidak error
+          rm -rf .github/workflows
+          
+          # Commit penghapusan tersebut
+          git add .
+          git commit -m "Remove external workflows to fix permission error" || echo "No workflows to remove"
           
           # Push ke repo kamu
           git push origin Aberuzz
