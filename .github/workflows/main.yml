@@ -1,4 +1,4 @@
-name: Build Kernel by purdiantoefendi-cyber (Smart Build)
+name: Build Kernel by purdiantoefendi-cyber (Fix Permissions)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,6 @@ jobs:
       contents: write
 
     steps:
-      # Langkah 1: Checkout Kode Sumber
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
@@ -19,24 +18,29 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      # Langkah 2: Install Dependensi (DITAMBAH GCC ARM 32-BIT)
+      # --- PERBAIKAN IZIN FILE (LEBIH KUAT) ---
+      # Memaksa semua file di folder scripts/ menjadi executable
+      - name: Fix Script Permissions
+        run: |
+          chmod -R +x scripts/
+          chmod -R +x tools/
+          echo "Permissions fixed."
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex \
           gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-      # Langkah 3: Unduh Toolchain Clang
       - name: Download Clang Toolchain
         run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
 
-      # Langkah 4: Compile Kernel (DIOPTIMALKAN)
+      # Gunakan variabel args agar config dan compile konsisten
       - name: Compile Kernel
         run: |
-          # Set Path Clang
           export PATH="${{ github.workspace }}/clang-toolchain/bin:$PATH"
           
-          # Definisi Variabel Make agar rapi dan terbaca
+          # Variabel Build
           args="O=out \
           ARCH=arm64 \
           SUBARCH=arm64 \
@@ -46,16 +50,14 @@ jobs:
           CROSS_COMPILE=aarch64-linux-gnu- \
           CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
           LLVM=1"
-
-          echo "Starting Build Configuration..."
-          # Masukkan args saat generate config juga
+          
+          echo "--- Generating .config ---"
+          # Penting: args harus ikut saat membuat config!
           make $args earth_defconfig
           
-          echo "Starting Kernel Compilation..."
-          # Tambahkan KCFLAGS untuk menekan warning yang dianggap error
+          echo "--- Compiling Kernel ---"
           make -j$(nproc) $args KCFLAGS="-Wno-error"
-
-      # Langkah 5: Upload
+          
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
