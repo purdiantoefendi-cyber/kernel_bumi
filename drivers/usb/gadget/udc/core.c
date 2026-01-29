@@ -1590,6 +1590,7 @@ static void usb_gadget_remove_driver(struct usb_udc *udc)
 void usb_del_gadget(struct usb_gadget *gadget)
 {
 	struct usb_udc *udc = gadget->udc;
+	unsigned long flags;
 
 	if (!udc)
 		return;
