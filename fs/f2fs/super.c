@@ -3766,7 +3766,7 @@ try_onemore:
 		err = f2fs_recover_fsync_data(sbi, true);
 
 		if (err > 0) {
-			if (!f2fs_readonly(sbi)) {
+			if (!f2fs_readonly(sb)) {
 				f2fs_err(sbi, KERN_ERR,
 					"Need to recover fsync data");
 				err = -EINVAL;
