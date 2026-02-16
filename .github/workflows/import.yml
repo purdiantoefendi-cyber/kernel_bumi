@@ -24,7 +24,7 @@ jobs:
         run: |
           git remote add target_repo https://github.com/Abreuzzs/AbrezzPjkt_Earth.git
           git fetch target_repo Master
-          git checkout -b Aberuzz target_repo/Master
+          git checkout -b new target_repo/Master
           
           # HAPUS file workflow orang lain agar tidak error
           rm -rf .github/workflows
