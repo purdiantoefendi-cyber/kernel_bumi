@@ -42,9 +42,9 @@ config IOSCHED_ZEN
 	  FCFS, dispatches are back-inserted, deadlines ensure fairness.
 	  Should work best with devices where there is no travel delay.
 
-#config IOSCHED_GAMER
-#    tristate "Gamer I/O scheduler"
-#    default y
+config IOSCHED_GAMER
+    tristate "Gamer I/O scheduler"
+    default y
 
 config IOSCHED_PERFORMANCE
     tristate "Performance I/O scheduler"
