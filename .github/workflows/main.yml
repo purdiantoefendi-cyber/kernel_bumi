@@ -15,7 +15,7 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          ref: pure   # branch kamu
+          ref: diantk   # branch kamu
           fetch-depth: 0   # penting agar bisa ambil history penuh
           submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
 
