@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: Build Kernel by ${{ github.actor }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
