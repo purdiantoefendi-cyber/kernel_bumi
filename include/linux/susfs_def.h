@@ -2,6 +2,7 @@
 #define KSU_SUSFS_DEF_H
 
 #include <linux/bits.h>
+#include <linux/version.h> // We need check kernel version.
 
 /********/
 /* ENUM */
@@ -13,12 +14,12 @@
 #define CMD_SUSFS_SET_SDCARD_ROOT_PATH 0x55552
 #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553
 #define CMD_SUSFS_ADD_SUS_MOUNT 0x55560 /* deprecated */
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS 0x55561
-#define CMD_SUSFS_UMOUNT_FOR_ZYGOTE_ISO_SERVICE 0x55562
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x55561
+#define CMD_SUSFS_UMOUNT_FOR_ZYGOTE_ISO_SERVICE 0x55562 /* deprecated */
 #define CMD_SUSFS_ADD_SUS_KSTAT 0x55570
 #define CMD_SUSFS_UPDATE_SUS_KSTAT 0x55571
 #define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x55572
-#define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580
+#define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580 /* deprecated */
 #define CMD_SUSFS_SET_UNAME 0x55590
 #define CMD_SUSFS_ENABLE_LOG 0x555a0
 #define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 0x555b0
@@ -26,6 +27,9 @@
 #define CMD_SUSFS_SHOW_VERSION 0x555e1
 #define CMD_SUSFS_SHOW_ENABLED_FEATURES 0x555e2
 #define CMD_SUSFS_SHOW_VARIANT 0x555e3
+#define CMD_SUSFS_SHOW_SUS_SU_WORKING_MODE 0x555e4 /* deprecated */
+#define CMD_SUSFS_IS_SUS_SU_READY 0x555f0 /* deprecated */
+#define CMD_SUSFS_SUS_SU 0x60000 /* deprecated */
 #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60010
 #define CMD_SUSFS_ADD_SUS_MAP 0x60020
 
@@ -42,9 +46,8 @@
 #define DEFAULT_KSU_MNT_GROUP_ID 5000 /* used by mount->mnt_group_id */
 
 /*
- * inode->i_state => storing flag 'INODE_STATE_'
- * mount->mnt.susfs_mnt_id_backup => storing original mnt_id of normal mounts or custom sus mnt_id of sus mounts
- * inode->i_mapping->flags => storing flag 'AS_FLAGS_'
+ * mount->mnt.susfs_mnt_id_backup => storing original mount's mnt_id
+ * inode->i_mapping->flags => A 'unsigned long' type storing flag 'AS_FLAGS_', bit 1 to 31 is not usable since 6.12
  * nd->state => storing flag 'ND_STATE_'
  * nd->flags => storing flag 'ND_FLAGS_'
  * task_struct->thread_info.flags => storing flag 'TIF_'
@@ -73,8 +76,46 @@
 #define ND_FLAGS_LOOKUP_LAST		0x2000000
  
 #define MAGIC_MOUNT_WORKDIR "/debug_ramdisk/workdir"
-#define DATA_ADB_NO_AUTO_ADD_SUS_BIND_MOUNT "/data/adb/susfs_no_auto_add_sus_bind_mount"
-#define DATA_ADB_NO_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT "/data/adb/susfs_no_auto_add_sus_ksu_default_mount"
+
+/* From KernelSU */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+typedef const struct qstr *susfs_fname_t;
+#define susfs_fname_len(f) ((f)->len)
+#define susfs_fname_arg(f) ((f)->name)
+#else
+typedef const unsigned char *susfs_fname_t;
+#define susfs_fname_len(f) (strlen(f))
+#define susfs_fname_arg(f) (f)
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+#define SUSFS_DECL_FSNOTIFY_OPS(name)                                            \
+int name(struct fsnotify_mark *mark, u32 mask, struct inode *inode,    \
+struct inode *dir, const struct qstr *file_name, u32 cookie)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+#define SUSFS_DECL_FSNOTIFY_OPS(name)                                            \
+int name(struct fsnotify_group *group, struct inode *inode, u32 mask,  \
+const void *data, int data_type, susfs_fname_t file_name,       \
+u32 cookie, struct fsnotify_iter_info *iter_info)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
+#define SUSFS_DECL_FSNOTIFY_OPS(name)                                            \
+int name(struct fsnotify_group *group, struct inode *inode, u32 mask,  \
+const void *data, int data_type, susfs_fname_t file_name,       \
+u32 cookie, struct fsnotify_iter_info *iter_info)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+#define SUSFS_DECL_FSNOTIFY_OPS(name)                                            \
+int name(struct fsnotify_group *group, struct inode *inode,            \
+struct fsnotify_mark *inode_mark,                             \
+struct fsnotify_mark *vfsmount_mark, u32 mask,                \
+const void *data, int data_type, susfs_fname_t file_name,       \
+u32 cookie, struct fsnotify_iter_info *iter_info)
+#else
+#define SUSFS_DECL_FSNOTIFY_OPS(name)                                            \
+int name(struct fsnotify_group *group, struct inode *inode,            \
+struct fsnotify_mark *inode_mark,                             \
+struct fsnotify_mark *vfsmount_mark, u32 mask, void *data,    \
+int data_type, susfs_fname_t file_name, u32 cookie)
+#endif
 
 static inline bool susfs_is_current_proc_umounted(void) {
 	return test_ti_thread_flag(&current->thread_info, TIF_PROC_UMOUNTED);

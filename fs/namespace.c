@@ -27,6 +27,9 @@
 #include <linux/task_work.h>
 #include <linux/sched/task.h>
 #include <linux/fs_context.h>
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 #include <linux/susfs_def.h>
@@ -36,9 +39,8 @@
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 extern bool susfs_is_current_ksu_domain(void);
-extern bool susfs_is_boot_completed_triggered;
+extern bool susfs_is_sdcard_android_data_decrypted;
 
-static DEFINE_IDA(susfs_ksu_mnt_group_ida);
 static atomic64_t susfs_ksu_mounts = ATOMIC64_INIT(0);
 
 #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
@@ -128,13 +130,11 @@ static void mnt_free_id(struct mount *mnt)
 	if (mnt->mnt.susfs_mnt_id_backup == DEFAULT_KSU_MNT_ID) {
 		return;
 	}
-
 	// Second if susfs_mnt_id_backup was set after mnt_id reorder, free it if so.
 	if (likely(mnt->mnt.susfs_mnt_id_backup)) {
 		ida_free(&mnt_id_ida, mnt->mnt.susfs_mnt_id_backup);
 		return;
 	}
-
 #endif
 	ida_free(&mnt_id_ida, mnt->mnt_id);
 }
@@ -147,13 +147,14 @@ static int mnt_alloc_group_id(struct mount *mnt)
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	int res;
 
-	/* - At frist susfs_is_boot_completed_triggered is set to false in kernel,
-	 *   and it is still allowed to assign our custom mnt_group_id via susfs_ksu_mnt_group_ida
-	 *   if it is ksu mounts, until susfs_is_boot_completed_triggered is set to true
-	 *   when boot-completed stage is triggered in core_hook.c 
+	/* - mnt_alloc_group_id will unlikely get called after screen is unlocked on reboot,
+	 *   so here we can persistently check if current is ksu domain, and assign a sus
+	 *   mnt_group_id if so.
+	 * - Also we can re-use the original mnt_group_ida so there is no need to use
+	 *   another ida nor hook the mnt_release_group_id() function.
 	 */
-	if (!susfs_is_boot_completed_triggered && mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
-		res = ida_alloc_min(&susfs_ksu_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
+	if (susfs_is_current_ksu_domain()) {
+		res = ida_alloc_min(&mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
 		goto bypass_orig_flow;
 	}
 	res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
@@ -228,21 +229,21 @@ static struct mount *susfs_reuse_sus_vfsmnt(const char *name, int orig_mnt_id)
 
 		if (name) {
 			mnt->mnt_devname = kstrdup_const(name,
-							 GFP_KERNEL_ACCOUNT);
+											 GFP_KERNEL_ACCOUNT);
 			if (!mnt->mnt_devname)
 				goto out_free_cache;
 		}
 
-#ifdef CONFIG_SMP
+		#ifdef CONFIG_SMP
 		mnt->mnt_pcp = alloc_percpu(struct mnt_pcp);
 		if (!mnt->mnt_pcp)
 			goto out_free_devname;
 
 		this_cpu_add(mnt->mnt_pcp->mnt_count, 1);
-#else
+		#else
 		mnt->mnt_count = 1;
 		mnt->mnt_writers = 0;
-#endif
+		#endif
 		mnt->mnt.data = NULL;
 
 		// Makes ida_free() easier to determine whether it should free the mnt_id or not
@@ -262,11 +263,11 @@ static struct mount *susfs_reuse_sus_vfsmnt(const char *name, int orig_mnt_id)
 	}
 	return mnt;
 
-#ifdef CONFIG_SMP
-out_free_devname:
+	#ifdef CONFIG_SMP
+	out_free_devname:
 	kfree_const(mnt->mnt_devname);
-#endif
-out_free_cache:
+	#endif
+	out_free_cache:
 	kmem_cache_free(mnt_cache, mnt);
 	return NULL;
 }
@@ -282,21 +283,21 @@ static struct mount *susfs_alloc_sus_vfsmnt(const char *name)
 
 		if (name) {
 			mnt->mnt_devname = kstrdup_const(name,
-							 GFP_KERNEL_ACCOUNT);
+											 GFP_KERNEL_ACCOUNT);
 			if (!mnt->mnt_devname)
 				goto out_free_cache;
 		}
 
-#ifdef CONFIG_SMP
+		#ifdef CONFIG_SMP
 		mnt->mnt_pcp = alloc_percpu(struct mnt_pcp);
 		if (!mnt->mnt_pcp)
 			goto out_free_devname;
 
 		this_cpu_add(mnt->mnt_pcp->mnt_count, 1);
-#else
+		#else
 		mnt->mnt_count = 1;
 		mnt->mnt_writers = 0;
-#endif
+		#endif
 		mnt->mnt.data = NULL;
 		// Makes ida_free() easier to determine whether it should free the mnt_id or not
 		mnt->mnt.susfs_mnt_id_backup = DEFAULT_KSU_MNT_ID;
@@ -315,11 +316,11 @@ static struct mount *susfs_alloc_sus_vfsmnt(const char *name)
 	}
 	return mnt;
 
-#ifdef CONFIG_SMP
-out_free_devname:
+	#ifdef CONFIG_SMP
+	out_free_devname:
 	kfree_const(mnt->mnt_devname);
-#endif
-out_free_cache:
+	#endif
+	out_free_cache:
 	kmem_cache_free(mnt_cache, mnt);
 	return NULL;
 }
@@ -332,6 +333,7 @@ static struct mount *alloc_vfsmnt(const char *name)
 		int err;
 
 		err = mnt_alloc_id(mnt);
+
 		if (err)
 			goto out_free_cache;
 
@@ -350,6 +352,10 @@ static struct mount *alloc_vfsmnt(const char *name)
 #else
 		mnt->mnt_count = 1;
 		mnt->mnt_writers = 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		// Make sure mnt->mnt.susfs_mnt_id_backup is initialized every time.
+		mnt->mnt.susfs_mnt_id_backup = 0;
 #endif
 		mnt->mnt.data = NULL;
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -1228,6 +1234,29 @@ skip_checking_for_ksu_proc:
 	}
 #endif
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	// We won't check it anymore if boot-completed stage is triggered.
+	if (susfs_is_sdcard_android_data_decrypted) {
+		goto skip_checking_for_ksu_proc;
+	}
+	// First we must check for ksu process because of magic mount
+	if (susfs_is_current_ksu_domain()) {
+		// if it is unsharing, we reuse the old->mnt_id
+		if (flag & CL_COPY_MNT_NS) {
+			mnt = susfs_reuse_sus_vfsmnt(old->mnt_devname, old->mnt_id);
+			goto bypass_orig_flow;
+		}
+		// else we just go assign fake mnt_id
+		mnt = susfs_alloc_sus_vfsmnt(old->mnt_devname);
+		goto bypass_orig_flow;
+	}
+skip_checking_for_ksu_proc:
+	// Lastly for other processes of which old->mnt_id == DEFAULT_KSU_MNT_ID, go assign fake mnt_id
+	if (old->mnt_id == DEFAULT_KSU_MNT_ID) {
+		mnt = susfs_alloc_sus_vfsmnt(old->mnt_devname);
+		goto bypass_orig_flow;
+	}
+#endif
 	mnt = alloc_vfsmnt(old->mnt_devname);
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 bypass_orig_flow:
@@ -1283,6 +1312,7 @@ bypass_orig_flow:
 	mnt->mnt.mnt_root = dget(root);
 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
 	mnt->mnt_parent = mnt;
+
 	lock_mount_hash();
 	list_add_tail(&mnt->mnt_instance, &sb->s_mounts);
 	unlock_mount_hash();
@@ -2015,7 +2045,7 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 					int flag)
 {
 	struct mount *res, *p, *q, *r, *parent;
-
+	
 	if (!(flag & CL_COPY_UNBINDABLE) && IS_MNT_UNBINDABLE(mnt))
 		return ERR_PTR(-EINVAL);
 
@@ -2031,6 +2061,7 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 	p = mnt;
 	list_for_each_entry(r, &mnt->mnt_mounts, mnt_child) {
 		struct mount *s;
+
 		if (!is_subdir(r->mnt_mountpoint, dentry))
 			continue;
 
@@ -2060,6 +2091,7 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 			q = clone_mnt(p, p->mnt.mnt_root, flag);
 			if (IS_ERR(q))
 				goto out;
+
 			lock_mount_hash();
 			list_add_tail(&q->mnt_list, &res->mnt_list);
 			attach_mnt(q, parent, p->mnt_mp);
@@ -3318,6 +3350,7 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	 */
 	p = old;
 	q = new;
+
 	while (p) {
 		q->mnt_ns = new_ns;
 		new_ns->mounts++;
@@ -3338,6 +3371,7 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 		while (p->mnt.mnt_root != q->mnt.mnt_root)
 			p = next_mnt(p, old);
 	}
+
 	namespace_unlock();
 
 	if (rootmnt)
@@ -3916,8 +3950,8 @@ void susfs_reorder_mnt_id(void) {
 		if (mnt->mnt_id == DEFAULT_KSU_MNT_ID) {
 			continue;
 		}
-		mnt->mnt.susfs_mnt_id_backup = mnt->mnt_id;
-		mnt->mnt_id = first_mnt_id++;
+		WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
+		WRITE_ONCE(mnt->mnt_id, first_mnt_id++);
 	}
 	put_mnt_ns(mnt_ns);
 }

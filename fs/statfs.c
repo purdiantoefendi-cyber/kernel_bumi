@@ -74,9 +74,9 @@ static int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
 int vfs_statfs(const struct path *path, struct kstatfs *buf)
 {
 	int error;
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	struct mount *mnt; 
+	struct mount *mnt;
+
 	mnt = real_mount(path->mnt);
 	if (likely(susfs_is_current_proc_umounted())) {
 		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) {}
