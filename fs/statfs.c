@@ -9,6 +9,10 @@
 #include <linux/security.h>
 #include <linux/uaccess.h>
 #include <linux/compat.h>
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#include <linux/susfs_def.h>
+#include "mount.h"
+#endif
 #include "internal.h"
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
@@ -108,42 +112,12 @@ bypass_orig_flow:
 int vfs_statfs(const struct path *path, struct kstatfs *buf)
 {
 	int error;
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	if (susfs_is_current_app_uid()) {
-		struct inode *inode = d_backing_inode(path->dentry);
-		bool is_fuse = false;
-		if (susfs_is_inode_sus_kstat(inode, &is_fuse)) {
-			// - here we do not call calculate_f_flags() as buf->f_flags will be spoofed
-			//   by susfs_statfs_by_dentry().
-			return susfs_statfs_by_dentry(path->dentry, buf, &is_fuse);
-		}
-	}
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (likely(susfs_is_current_proc_umounted())) {
-		struct vfsmount *no_sus_vfsmnt = NULL;
-		no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path->mnt);
-		if (path->mnt == no_sus_vfsmnt) {
-			dput(no_sus_vfsmnt->mnt_root);
-			mntput(no_sus_vfsmnt);
-			error = statfs_by_dentry(path->dentry, buf);
-			if (!error)
-				buf->f_flags = calculate_f_flags(path->mnt);
-			return error;
-	}
-		error = statfs_by_dentry(no_sus_vfsmnt->mnt_root, buf);
-		if (!error)
-			buf->f_flags = calculate_f_flags(no_sus_vfsmnt);
-		dput(no_sus_vfsmnt->mnt_root);
-		mntput(no_sus_vfsmnt);
-		return error;
-	}
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	struct mount *mnt;
 
 	mnt = real_mount(path->mnt);
-	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
-		for (; mnt->mnt_id >= DEFAULT_SUS_MNT_ID; mnt = mnt->mnt_parent) {}
+	if (likely(susfs_is_current_proc_umounted())) {
+		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) {}
 	}
 	error = statfs_by_dentry(mnt->mnt.mnt_root, buf);
 	if (!error)

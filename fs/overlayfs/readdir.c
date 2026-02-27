@@ -905,9 +905,7 @@ static int ovl_dir_open(struct inode *inode, struct file *file)
 #endif
 
 	type = ovl_path_real(file->f_path.dentry, &realpath);
-#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS
-bypass_orig_flow:
-#endif
+
 	realfile = ovl_path_open(&realpath, file->f_flags);
 	if (IS_ERR(realfile)) {
 		kfree(od);

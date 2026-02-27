@@ -12,9 +12,9 @@
 #include <linux/fs.h>
 
 #include <linux/proc_fs.h>
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 #include <linux/susfs_def.h>
-#endif // #ifdef CONFIG_KSU_SUSFS
+#endif
 
 #include "../mount.h"
 #include "internal.h"
@@ -67,62 +67,17 @@ static int seq_show(struct seq_file *m, void *v)
 	if (ret)
 		return ret;
 
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-	if (susfs_is_current_app_uid()) {
-		struct inode *inode = file_inode(file);
-		bool is_fuse = false;
-		if (susfs_is_inode_sus_kstat(inode, &is_fuse)) {
-			int mnt_id = real_mount(file->f_path.mnt)->mnt_id;
-			unsigned long ino = inode->i_ino;
-			susfs_sus_kstat_spoof_proc_fd_seq_show(&mnt_id, &ino, inode->i_sb->s_dev);
-			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-					(long long)file->f_pos, f_flags,
-					mnt_id,
-					ino);
-			goto bypass_orig_flow;
-		}
-	}
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (likely(susfs_is_current_proc_umounted())) {
-		struct mount *mnt = real_mount(file->f_path.mnt);
-		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
-			struct path path;
-			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
-			char *dpath;
-
-			if (!pathname) {
-				goto orig_flow;
-			}
-			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-			if (!dpath) {
-				goto out_kfree;
-			}
-			if (kern_path(dpath, 0, &path)) {
-				goto out_kfree;
-			}
-			if (!d_backing_inode(path.dentry)) {
-				goto out_path_put;
-			}
-
-			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-					(long long)file->f_pos, f_flags,
-					susfs_get_non_sus_mnt_id_from_mnt(mnt),
-					d_backing_inode(path.dentry)->i_ino);
-			path_put(&path);
-			kfree(pathname);
-			goto bypass_orig_flow;
-out_path_put:
-			path_put(&path);
-out_kfree:
-			kfree(pathname);
-			goto orig_flow;
-		}
+	mnt = real_mount(file->f_path.mnt);
+	if (likely(susfs_is_current_proc_umounted()) &&
+		mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
+	{
+		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
 	}
-orig_flow:
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-
+	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
+			   (long long)file->f_pos, f_flags,
+			   mnt->mnt_id);
+#else
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
 		   (long long)file->f_pos, f_flags,
 		   real_mount(file->f_path.mnt)->mnt_id);
