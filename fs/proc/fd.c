@@ -73,25 +73,30 @@ static int seq_show(struct seq_file *m, void *v)
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	mnt = real_mount(file->f_path.mnt);
-	if (likely(susfs_is_current_proc_umounted()) &&
-		mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
+	if (likely(susfs_is_current_proc_umounted_app()) &&
+				mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
 	{
 		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
-	}
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	if (PRE_CHECK_OPEN_REDIRECT(file_inode(file))) {
-		if (susfs_open_redirect_spoof_seq_show(file_inode(file), &mnt_id, &ino))
+
+		if (!pathname) {
 			goto orig_flow;
+		}
+		dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+		if (!dpath) {
+			kfree(pathname);
+			goto orig_flow;
+
+		}
+		if (kern_path(dpath, 0, &path)) {
+			kfree(pathname);
+			goto orig_flow;
+		}
 		seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
 				(long long)file->f_pos, f_flags,
 				mnt_id,
 				ino);
 		goto bypass_orig_flow;
 	}
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-
-#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 orig_flow:
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
 			(long long)file->f_pos, f_flags,
