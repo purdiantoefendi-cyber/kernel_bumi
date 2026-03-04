@@ -1,0 +1,71 @@
+name: Custom Branch Merger (Auto-Resolve)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Branch SUMBER (yang perubahannya mau diambil)'
+        required: true
+        type: string
+      target_branch:
+        description: 'Branch TUJUAN (yang akan menerima perubahan)'
+        required: true
+        type: string
+      conflict_resolution:
+        description: 'Pilih Strategi Auto-Resolve jika terjadi konflik'
+        required: true
+        type: choice
+        options:
+          - 'normal (Biarkan error jika ada konflik)'
+          - 'theirs (Timpa dengan file dari SUMBER)'
+          - 'ours (Pertahankan file di TUJUAN)'
+        default: 'normal (Biarkan error jika ada konflik)'
+
+jobs:
+  merge-job:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write 
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 
+
+      - name: Konfigurasi Git User
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+      - name: Proses Merge dengan Auto-Resolve Custom
+        run: |
+          SOURCE="${{ inputs.source_branch }}"
+          TARGET="${{ inputs.target_branch }}"
+          STRATEGY="${{ inputs.conflict_resolution }}"
+
+          echo "Memulai proses merge dari '$SOURCE' ke '$TARGET'..."
+
+          # Pindah ke branch tujuan dan pastikan up-to-date
+          git checkout "$TARGET"
+          git pull origin "$TARGET" || echo "Branch $TARGET mungkin baru"
+
+          # Ambil data terbaru dari branch sumber
+          git fetch origin "$SOURCE"
+
+          # Logika Auto-Resolve berdasarkan pilihan user
+          if [[ "$STRATEGY" == *"theirs"* ]]; then
+            echo "Strategi: THEIRS (Branch Sumber Menang)"
+            git merge origin/"$SOURCE" --allow-unrelated-histories -X theirs -m "Auto-merge: '$SOURCE' ke '$TARGET' (Auto-resolve: Source wins)"
+            
+          elif [[ "$STRATEGY" == *"ours"* ]]; then
+            echo "Strategi: OURS (Branch Tujuan Menang)"
+            git merge origin/"$SOURCE" --allow-unrelated-histories -X ours -m "Auto-merge: '$SOURCE' ke '$TARGET' (Auto-resolve: Target wins)"
+            
+          else
+            echo "Strategi: NORMAL (Tanpa Auto-resolve)"
+            git merge origin/"$SOURCE" --allow-unrelated-histories -m "Auto-merge: Menggabungkan '$SOURCE' ke dalam '$TARGET'"
+          fi
+          
+          # Push hasil merge ke repo
+          git push origin "$TARGET"
