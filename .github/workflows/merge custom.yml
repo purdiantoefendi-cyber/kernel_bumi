@@ -1,14 +1,18 @@
-name: Custom Branch Merger (Auto-Resolve)
+name: Custom External Repo Merger (Auto-Resolve)
 
 on:
   workflow_dispatch:
     inputs:
+      source_repo_url:
+        description: 'URL Git SUMBER (contoh: https://github.com/LineageOS/android_kernel_xiaomi_mido.git)'
+        required: true
+        type: string
       source_branch:
-        description: 'Branch SUMBER (yang perubahannya mau diambil)'
+        description: 'Branch SUMBER dari URL di atas (contoh: lineage-20)'
         required: true
         type: string
       target_branch:
-        description: 'Branch TUJUAN (yang akan menerima perubahan)'
+        description: 'Branch TUJUAN di repo kamu (contoh: main)'
         required: true
         type: string
       conflict_resolution:
@@ -17,8 +21,8 @@ on:
         type: choice
         options:
           - 'normal (Biarkan error jika ada konflik)'
-          - 'theirs (Timpa dengan file dari SUMBER)'
-          - 'ours (Pertahankan file di TUJUAN)'
+          - 'theirs (Timpa dengan file dari SUMBER EKSTERNAL)'
+          - 'ours (Pertahankan file di REPO KAMU)'
         default: 'normal (Biarkan error jika ada konflik)'
 
 jobs:
@@ -28,7 +32,7 @@ jobs:
       contents: write 
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository Kamu
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 
@@ -38,34 +42,39 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
 
-      - name: Proses Merge dengan Auto-Resolve Custom
+      - name: Proses Merge dari Custom Repo
         run: |
-          SOURCE="${{ inputs.source_branch }}"
+          # 1. Menyiapkan variabel dari input form
+          SOURCE_URL="${{ inputs.source_repo_url }}"
+          SOURCE_BRANCH="${{ inputs.source_branch }}"
           TARGET="${{ inputs.target_branch }}"
           STRATEGY="${{ inputs.conflict_resolution }}"
 
-          echo "Memulai proses merge dari '$SOURCE' ke '$TARGET'..."
+          echo "Memulai proses merge..."
+          echo "Dari URL: $SOURCE_URL (Branch: $SOURCE_BRANCH)"
+          echo "Ke Branch Lokal: $TARGET"
 
-          # Pindah ke branch tujuan dan pastikan up-to-date
-          git checkout "$TARGET"
-          git pull origin "$TARGET" || echo "Branch $TARGET mungkin baru"
+          # 2. Pastikan berada di branch tujuan (buat baru jika belum ada) dan update data terakhir
+          git checkout "$TARGET" 2>/dev/null || git checkout -b "$TARGET"
+          git pull origin "$TARGET" || echo "Branch $TARGET mungkin belum ada di origin, lanjut..."
 
-          # Ambil data terbaru dari branch sumber
-          git fetch origin "$SOURCE"
+          # 3. Fetch data dari Custom URL Sumber
+          # Data yang ditarik akan disimpan sementara di FETCH_HEAD oleh Git
+          git fetch "$SOURCE_URL" "$SOURCE_BRANCH"
 
-          # Logika Auto-Resolve berdasarkan pilihan user
+          # 4. Logika Auto-Resolve Merge menggunakan FETCH_HEAD
           if [[ "$STRATEGY" == *"theirs"* ]]; then
-            echo "Strategi: THEIRS (Branch Sumber Menang)"
-            git merge origin/"$SOURCE" --allow-unrelated-histories -X theirs -m "Auto-merge: '$SOURCE' ke '$TARGET' (Auto-resolve: Source wins)"
+            echo "Strategi: THEIRS (Branch Sumber Eksternal Menang)"
+            git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET (Auto-resolve: Theirs wins)"
             
           elif [[ "$STRATEGY" == *"ours"* ]]; then
-            echo "Strategi: OURS (Branch Tujuan Menang)"
-            git merge origin/"$SOURCE" --allow-unrelated-histories -X ours -m "Auto-merge: '$SOURCE' ke '$TARGET' (Auto-resolve: Target wins)"
+            echo "Strategi: OURS (Branch Tujuan Kamu Menang)"
+            git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET (Auto-resolve: Ours wins)"
             
           else
             echo "Strategi: NORMAL (Tanpa Auto-resolve)"
-            git merge origin/"$SOURCE" --allow-unrelated-histories -m "Auto-merge: Menggabungkan '$SOURCE' ke dalam '$TARGET'"
+            git merge FETCH_HEAD --allow-unrelated-histories -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET"
           fi
           
-          # Push hasil merge ke repo
+          # 5. Push hasil merge ke repo kamu
           git push origin "$TARGET"
