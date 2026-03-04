@@ -1,4 +1,4 @@
-name: Kernel Kernel an
+name: Kernel build custom
 
 on:
   workflow_dispatch:
@@ -35,8 +35,8 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh" | bash -s ${{ github.event.inputs.kernelsu_branch }}
 
         export ARCH=arm64
-        export KBUILD_BUILD_USER="makinohara"
-        export KBUILD_BUILD_HOST="wind_orchestra"
+        export KBUILD_BUILD_USER="DianTk"
+        export KBUILD_BUILD_HOST="DianTk"
         ARGS="O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1"
         
         make $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log || true
