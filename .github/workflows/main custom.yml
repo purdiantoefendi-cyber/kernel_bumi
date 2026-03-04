@@ -57,3 +57,12 @@ jobs:
           *.log
           *.zip
         retention-days: 7
+
+      # Langkah 9: Upload
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build
+          path: |
+            out/arch/arm64/boot/Image.gz*
+            out/arch/arm64/boot/dts/**/*.dtb
