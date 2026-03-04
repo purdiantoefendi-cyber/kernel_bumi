@@ -1,4 +1,4 @@
-name: Custom External Repo Merger (Auto-Resolve)
+name: Force Custom Merger (Auto-Resolve)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       source_branch:
-        description: 'Branch SUMBER dari URL di atas (contoh: lineage-20)'
+        description: 'Branch SUMBER (contoh: lineage-20)'
         required: true
         type: string
       target_branch:
@@ -16,13 +16,13 @@ on:
         required: true
         type: string
       conflict_resolution:
-        description: 'Pilih Strategi Auto-Resolve jika terjadi konflik'
+        description: 'Pilih Paksa Resolve jika bentrok berat'
         required: true
         type: choice
         options:
           - 'normal (Biarkan error jika ada konflik)'
-          - 'theirs (Timpa dengan file dari SUMBER EKSTERNAL)'
-          - 'ours (Pertahankan file di REPO KAMU)'
+          - 'theirs (PAKSA timpa pakai file SUMBER)'
+          - 'ours (PAKSA pertahankan file REPO KAMU)'
         default: 'normal (Biarkan error jika ada konflik)'
 
 jobs:
@@ -42,39 +42,57 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
 
-      - name: Proses Merge dari Custom Repo
+      - name: Proses Eksekusi Merge Paksa
         run: |
-          # 1. Menyiapkan variabel dari input form
           SOURCE_URL="${{ inputs.source_repo_url }}"
           SOURCE_BRANCH="${{ inputs.source_branch }}"
           TARGET="${{ inputs.target_branch }}"
           STRATEGY="${{ inputs.conflict_resolution }}"
 
-          echo "Memulai proses merge..."
-          echo "Dari URL: $SOURCE_URL (Branch: $SOURCE_BRANCH)"
-          echo "Ke Branch Lokal: $TARGET"
+          echo "Mulai proses pull dari $SOURCE_URL ($SOURCE_BRANCH) ke $TARGET..."
 
-          # 2. Pastikan berada di branch tujuan (buat baru jika belum ada) dan update data terakhir
+          # 1. Pastikan di branch target dan update
           git checkout "$TARGET" 2>/dev/null || git checkout -b "$TARGET"
-          git pull origin "$TARGET" || echo "Branch $TARGET mungkin belum ada di origin, lanjut..."
+          git pull origin "$TARGET" || echo "Branch target mungkin baru."
 
-          # 3. Fetch data dari Custom URL Sumber
-          # Data yang ditarik akan disimpan sementara di FETCH_HEAD oleh Git
+          # 2. Fetch repo sumber eksternal
           git fetch "$SOURCE_URL" "$SOURCE_BRANCH"
 
-          # 4. Logika Auto-Resolve Merge menggunakan FETCH_HEAD
+          # 3. Logika Merge & Paksa Resolve
           if [[ "$STRATEGY" == *"theirs"* ]]; then
-            echo "Strategi: THEIRS (Branch Sumber Eksternal Menang)"
-            git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET (Auto-resolve: Theirs wins)"
+            echo "Strategi: THEIRS (PAKSA PAKAI FILE SUMBER EKSTERNAL)"
+            
+            # Coba merge normal dengan preferensi theirs
+            git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH (Theirs)" || {
+              echo "Terdeteksi konflik berat! Memaksa resolve dengan THEIRS..."
+              
+              # Cari semua file bentrok (U) dan paksa checkout versi theirs
+              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --theirs {}
+              
+              # Tambahkan perubahan dan paksa commit
+              git add .
+              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi THEIRS"
+            }
             
           elif [[ "$STRATEGY" == *"ours"* ]]; then
-            echo "Strategi: OURS (Branch Tujuan Kamu Menang)"
-            git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET (Auto-resolve: Ours wins)"
+            echo "Strategi: OURS (PAKSA PAKAI FILE REPO KAMU)"
+            
+            # Coba merge normal dengan preferensi ours
+            git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH (Ours)" || {
+              echo "Terdeteksi konflik berat! Memaksa resolve dengan OURS..."
+              
+              # Cari semua file bentrok (U) dan paksa checkout versi ours
+              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --ours {}
+              
+              # Tambahkan perubahan dan paksa commit
+              git add .
+              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi OURS"
+            }
             
           else
-            echo "Strategi: NORMAL (Tanpa Auto-resolve)"
-            git merge FETCH_HEAD --allow-unrelated-histories -m "Auto-merge: $SOURCE_BRANCH dari eksternal ke $TARGET"
+            echo "Strategi: NORMAL (Error jika bentrok)"
+            git merge FETCH_HEAD --allow-unrelated-histories -m "Auto-merge: $SOURCE_BRANCH ke $TARGET"
           fi
           
-          # 5. Push hasil merge ke repo kamu
+          # 4. Push hasil akhirnya ke repository kamu
           git push origin "$TARGET"
