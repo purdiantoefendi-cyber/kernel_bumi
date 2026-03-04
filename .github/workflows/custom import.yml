@@ -1,0 +1,61 @@
+name: Custom Repo Importer
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repo_url:
+        description: 'URL Repository yang mau di-import (contoh: https://github.com/Abreuzzs/AbrezzPjkt_Earth.git)'
+        required: true
+        type: string
+      source_branch:
+        description: 'Nama branch dari repo target (contoh: Master)'
+        required: true
+        type: string
+      destination_branch:
+        description: 'Nama branch baru di repo kamu (contoh: Aberuzz)'
+        required: true
+        type: string
+
+jobs:
+  import-job:
+    runs-on: ubuntu # Tetap menggunakan self-hosted sesuai kode aslimu
+    permissions:
+      contents: write # Izin wajib untuk push branch baru
+
+    steps:
+      - name: Checkout Repo Kamu
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Wajib 0 untuk fetch history penuh
+
+      - name: Konfigurasi Git User
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+      - name: Proses Import Custom
+        run: |
+          # 1. Menyiapkan variabel dari input form GitHub Actions
+          TARGET_REPO="${{ inputs.target_repo_url }}"
+          SOURCE_BRANCH="${{ inputs.source_branch }}"
+          DEST_BRANCH="${{ inputs.destination_branch }}"
+
+          echo "Mengimport dari: $TARGET_REPO (Branch: $SOURCE_BRANCH)"
+          echo "Tujuan branch baru: $DEST_BRANCH"
+
+          # 2. Proses Remote & Fetch
+          git remote add target_repo "$TARGET_REPO"
+          git fetch target_repo "$SOURCE_BRANCH"
+          
+          # 3. Checkout ke branch baru dengan source dari target
+          git checkout -b "$DEST_BRANCH" target_repo/"$SOURCE_BRANCH"
+          
+          # 4. HAPUS file workflow orang lain agar tidak error
+          rm -rf .github/workflows
+          
+          # 5. Commit penghapusan tersebut
+          git add .
+          git commit -m "Remove external workflows to fix permission error" || echo "No workflows to remove"
+          
+          # 6. Push ke repo kamu (-f digunakan agar bisa menimpa jika branch sudah ada)
+          git push origin "$DEST_BRANCH" -f
