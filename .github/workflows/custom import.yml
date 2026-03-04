@@ -18,7 +18,7 @@ on:
 
 jobs:
   import-job:
-    runs-on: ubuntu # Tetap menggunakan self-hosted sesuai kode aslimu
+    runs-on: ubuntu-latest # Tetap menggunakan self-hosted sesuai kode aslimu
     permissions:
       contents: write # Izin wajib untuk push branch baru
 
