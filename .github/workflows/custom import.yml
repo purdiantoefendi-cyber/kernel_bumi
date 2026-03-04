@@ -1,98 +1,61 @@
-name: Force Custom Merger (Auto-Resolve)
+name: Custom Repo Importer
 
 on:
   workflow_dispatch:
     inputs:
-      source_repo_url:
-        description: 'URL Git SUMBER (contoh: https://github.com/LineageOS/android_kernel_xiaomi_mido.git)'
+      target_repo_url:
+        description: 'URL Repository yang mau di-import (contoh: https://github.com/Abreuzzs/AbrezzPjkt_Earth.git)'
         required: true
         type: string
       source_branch:
-        description: 'Branch SUMBER (contoh: lineage-20)'
+        description: 'Nama branch dari repo target (contoh: Master)'
         required: true
         type: string
-      target_branch:
-        description: 'Branch TUJUAN di repo kamu (contoh: main)'
+      destination_branch:
+        description: 'Nama branch baru di repo kamu (contoh: Aberuzz)'
         required: true
         type: string
-      conflict_resolution:
-        description: 'Pilih Paksa Resolve jika bentrok berat'
-        required: true
-        type: choice
-        options:
-          - 'normal (Biarkan error jika ada konflik)'
-          - 'theirs (PAKSA timpa pakai file SUMBER)'
-          - 'ours (PAKSA pertahankan file REPO KAMU)'
-        default: 'normal (Biarkan error jika ada konflik)'
 
 jobs:
-  merge-job:
-    runs-on: ubuntu-latest
+  import-job:
+    runs-on: ubuntu-latest # Sudah diubah menjadi server Ubuntu bawaan GitHub
     permissions:
-      contents: write 
+      contents: write # Izin wajib untuk push branch baru
 
     steps:
-      - name: Checkout Repository Kamu
+      - name: Checkout Repo Kamu
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 
+          fetch-depth: 0 # Wajib 0 untuk fetch history penuh
 
       - name: Konfigurasi Git User
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
 
-      - name: Proses Eksekusi Merge Paksa
+      - name: Proses Import Custom
         run: |
-          SOURCE_URL="${{ inputs.source_repo_url }}"
+          # 1. Menyiapkan variabel dari input form GitHub Actions
+          TARGET_REPO="${{ inputs.target_repo_url }}"
           SOURCE_BRANCH="${{ inputs.source_branch }}"
-          TARGET="${{ inputs.target_branch }}"
-          STRATEGY="${{ inputs.conflict_resolution }}"
+          DEST_BRANCH="${{ inputs.destination_branch }}"
 
-          echo "Mulai proses pull dari $SOURCE_URL ($SOURCE_BRANCH) ke $TARGET..."
+          echo "Mengimport dari: $TARGET_REPO (Branch: $SOURCE_BRANCH)"
+          echo "Tujuan branch baru: $DEST_BRANCH"
 
-          # 1. Pastikan di branch target dan update
-          git checkout "$TARGET" 2>/dev/null || git checkout -b "$TARGET"
-          git pull origin "$TARGET" || echo "Branch target mungkin baru."
-
-          # 2. Fetch repo sumber eksternal
-          git fetch "$SOURCE_URL" "$SOURCE_BRANCH"
-
-          # 3. Logika Merge & Paksa Resolve
-          if [[ "$STRATEGY" == *"theirs"* ]]; then
-            echo "Strategi: THEIRS (PAKSA PAKAI FILE SUMBER EKSTERNAL)"
-            
-            # Coba merge normal dengan preferensi theirs
-            git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH (Theirs)" || {
-              echo "Terdeteksi konflik berat! Memaksa resolve dengan THEIRS..."
-              
-              # Cari semua file bentrok (U) dan paksa checkout versi theirs
-              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --theirs {}
-              
-              # Tambahkan perubahan dan paksa commit
-              git add .
-              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi THEIRS"
-            }
-            
-          elif [[ "$STRATEGY" == *"ours"* ]]; then
-            echo "Strategi: OURS (PAKSA PAKAI FILE REPO KAMU)"
-            
-            # Coba merge normal dengan preferensi ours
-            git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH (Ours)" || {
-              echo "Terdeteksi konflik berat! Memaksa resolve dengan OURS..."
-              
-              # Cari semua file bentrok (U) dan paksa checkout versi ours
-              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --ours {}
-              
-              # Tambahkan perubahan dan paksa commit
-              git add .
-              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi OURS"
-            }
-            
-          else
-            echo "Strategi: NORMAL (Error jika bentrok)"
-            git merge FETCH_HEAD --allow-unrelated-histories -m "Auto-merge: $SOURCE_BRANCH ke $TARGET"
-          fi
+          # 2. Proses Remote & Fetch
+          git remote add target_repo "$TARGET_REPO"
+          git fetch target_repo "$SOURCE_BRANCH"
           
-          # 4. Push hasil akhirnya ke repository kamu
-          git push origin "$TARGET"
+          # 3. Checkout ke branch baru dengan source dari target
+          git checkout -b "$DEST_BRANCH" target_repo/"$SOURCE_BRANCH"
+          
+          # 4. HAPUS file workflow orang lain agar tidak error
+          rm -rf .github/workflows
+          
+          # 5. Commit penghapusan tersebut
+          git add .
+          git commit -m "Remove external workflows to fix permission error" || echo "No workflows to remove"
+          
+          # 6. Push ke repo kamu (-f digunakan agar bisa menimpa jika branch sudah ada)
+          git push origin "$DEST_BRANCH" -f
