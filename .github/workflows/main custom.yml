@@ -1,10 +1,10 @@
-name: Kernel Kernel an
+name: Build Kernel Custom
 
 on:
   workflow_dispatch:
     inputs:
       branch: { description: 'Branch', required: true }
-      defconfig: { description: 'Defconfig', required: true, default: 'AbrezzPjkt_Earth/arch/arm64/configs/earth_defconfig' }
+      defconfig: { description: 'Defconfig', required: true, default: 'earth_defconfig' }
       kernelsu_url: { description: 'Custom KSU URL', required: false, default: 'https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh' }
       kernelsu_branch: { description: 'KSU Branch', required: false, default: 'master' }
 
@@ -41,7 +41,8 @@ jobs:
         # Argumen compiler
         ARGS="ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1"
         
-        make O=out $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log || true
+        # Membuat file .config (Diperbaiki: format defconfig dan penghapusan || true)
+        make O=out $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log
         
         # Proses compile dengan opsi fallback -j1 jika terjadi error
         make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log
