@@ -18,7 +18,7 @@ on:
 
 jobs:
   import-job:
-    runs-on: ubuntu-latest # Sudah diubah menjadi server Ubuntu bawaan GitHub
+    runs-on: ubuntu-slim # Sudah diubah menjadi server Ubuntu bawaan GitHub
     permissions:
       contents: write # Izin wajib untuk push branch baru
 
