@@ -1,0 +1,86 @@
+name: Force Push Commits (Custom Repo & Branch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      external_repo:
+        description: 'URL Repository Eksternal'
+        required: true
+        type: string
+        default: 'https://github.com/purdiantoefendi-cyber/AbrezzPjkt_Earth.git'
+      external_branch:
+        description: 'Branch di Repo Eksternal yang ingin diambil'
+        required: true
+        type: string
+        default: 'diantk'
+      target_branch:
+        description: 'Branch Tujuan di Repo Anda'
+        required: true
+        type: string
+        default: 'diantk2'
+      commit_hashes:
+        description: 'Daftar Commit Hash (pisahkan dengan spasi)'
+        required: true
+        type: string
+        default: '4fe189ecabd0565a0c3a95d0055e7d53480a72e9 20cb373a456560bac9e4af4888c899aed786f74e da17e11893d564a8b9fc2859917a7d4ca31d7ba4 d0f3b30e00cb5a1a0fe76bd445400299db619e53 a710a7e5f9e739ea6365e5fbc1831253444ff168'
+
+jobs:
+  force-apply-commits:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Konfigurasi Git User
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git config --global --add safe.directory '*'
+
+      - name: Proses Cherry-Pick dan Force Push
+        run: |
+          # Menyimpan input ke dalam variabel bash
+          EXTERNAL_REPO="${{ inputs.external_repo }}"
+          EXTERNAL_BRANCH="${{ inputs.external_branch }}"
+          TARGET_BRANCH="${{ inputs.target_branch }}"
+          COMMITS_INPUT="${{ inputs.commit_hashes }}"
+
+          echo "Mengambil dari: $EXTERNAL_REPO (Branch: $EXTERNAL_BRANCH)"
+          echo "Target push ke: $TARGET_BRANCH"
+
+          # 1. Konfigurasi Remote Repo Orang Lain
+          git remote remove custom_repo 2>/dev/null || true
+          git remote add custom_repo "$EXTERNAL_REPO"
+          
+          # Fetch HANYA branch yang ditentukan dari repo eksternal
+          git fetch custom_repo "$EXTERNAL_BRANCH"
+          # Fetch data dari repo kita sendiri
+          git fetch origin
+
+          # 2. Pindah ke branch Target
+          if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
+            git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+          else
+            # Jika branch belum ada, buat baru
+            git checkout -b "$TARGET_BRANCH"
+          fi
+
+          # 3. Mengubah input string commit menjadi array (dipisahkan oleh spasi)
+          read -r -a COMMITS <<< "$COMMITS_INPUT"
+
+          # 4. Cherry-pick Loop
+          for commit in "${COMMITS[@]}"; do
+            if [ -n "$commit" ]; then
+              echo "Applying commit: $commit"
+              git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"
+            fi
+          done
+
+          # 5. Push ke branch target di origin (repo Anda sendiri)
+          echo "Pushing to origin/$TARGET_BRANCH..."
+          git push origin "$TARGET_BRANCH" --force
