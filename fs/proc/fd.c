@@ -21,12 +21,8 @@
 #include "fd.h"
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-extern int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt);
+struct mount *susfs_get_non_sus_mnt_from_mnt(struct mount *orig_mnt);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, unsigned long *out_ino);
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 static int seq_show(struct seq_file *m, void *v)
 {
@@ -73,29 +69,37 @@ static int seq_show(struct seq_file *m, void *v)
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	mnt = real_mount(file->f_path.mnt);
-	if (likely(susfs_is_current_proc_umounted_app()) &&
+	if (likely(susfs_is_current_proc_umounted()) &&
 				mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
 	{
-		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+		struct path path;
+		char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		char *dpath;
 
 		if (!pathname) {
 			goto orig_flow;
 		}
 		dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
 		if (!dpath) {
-			kfree(pathname);
-			goto orig_flow;
-
+			goto out_kfree;
 		}
 		if (kern_path(dpath, 0, &path)) {
-			kfree(pathname);
-			goto orig_flow;
+			goto out_kfree;
+		}
+		if (!path.dentry->d_inode) {
+			goto out_path_put;
 		}
 		seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
 				(long long)file->f_pos, f_flags,
-				mnt_id,
-				ino);
+				susfs_get_non_sus_mnt_from_mnt(mnt)->mnt_id,
+				path.dentry->d_inode->i_ino);
+		path_put(&path);
+		kfree(pathname);
 		goto bypass_orig_flow;
+out_path_put:
+		path_put(&path);
+out_kfree:
+		kfree(pathname);
 	}
 orig_flow:
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
