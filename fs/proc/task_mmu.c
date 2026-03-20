@@ -404,19 +404,11 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 			goto done;
 		}
 #endif
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-		if (unlikely(test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state) &&
-			susfs_is_current_proc_umounted_app()))
-		{
-			susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);
-			goto bypass_orig_flow;
-		}
-#endif
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-bypass_orig_flow:
+		susfs_show_map_vma_spoofer(inode, &dev, &ino);
 #endif
 	}
 
