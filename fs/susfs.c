@@ -74,7 +74,7 @@ void susfs_add_sus_path(void __user **user_info) {
 
 	inode = d_backing_inode(path.dentry);
 	if (!inode) {
-		SUSFS_LOGE("inode || inode->i_mapping is NULL\n");
+		SUSFS_LOGE("inode is NULL\n");
 		info.err = -ENOENT;
 		goto out_path_put_path;
 	}
@@ -153,7 +153,7 @@ void susfs_run_sus_path_loop(void) {
 		{
 			inode = d_backing_inode(path.dentry);
 			if (!inode) {
-				SUSFS_LOGE("inode || inode->i_mapping is NULL\n");
+				SUSFS_LOGE("inode is NULL\n");
 				path_put(&path);
 				continue;
 			}
@@ -193,10 +193,6 @@ bool susfs_is_inode_sus_path(struct inode *inode)
 {
 	struct fuse_inode *fi = NULL;
 	if (!susfs_is_current_proc_umounted_app()) {
-		return false;
-	}
-	if (!inode->i_mapping) {
-		SUSFS_LOGE("inode->i_mapping is NULL\n");
 		return false;
 	}
 	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
@@ -287,8 +283,8 @@ static int susfs_mark_inode_sus_kstat(char *target_pathname, struct st_susfs_sus
 
 	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
 		fi = get_fuse_inode(inode);
-		if (!fi || !fi->inode.i_mapping) {
-			SUSFS_LOGE("fi || fi->inode.i_mapping is NULL\n");
+		if (!fi) {
+			SUSFS_LOGE("fi is NULL\n");
 			err = -ENOENT;
 			goto out_path_put_path;
 		}
@@ -469,8 +465,8 @@ void susfs_generic_fillattr_spoofer(struct inode *inode, struct kstat *stat)
 
 	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
 		fi = get_fuse_inode(inode);
-		if (!fi || !fi->inode.i_mapping) {
-			SUSFS_LOGE("fi || fi->inode.i_mapping is NULL\n");
+		if (!fi) {
+			SUSFS_LOGE("fi is NULL\n");
 			return;
 		}
 		if (!test_bit(AS_FLAGS_SUS_KSTAT, &fi->inode.i_state) ||
@@ -480,11 +476,6 @@ void susfs_generic_fillattr_spoofer(struct inode *inode, struct kstat *stat)
 		target_dev = fi->inode.i_sb->s_dev;
 		is_fuse = true;
 		goto out_spoof_kstat;
-	}
-	
-	if (!inode->i_mapping) {
-		SUSFS_LOGE("inode->i_mapping is NULL\n");
-		return;
 	}
 
 	if (!test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state) ||
@@ -544,8 +535,8 @@ void susfs_show_map_vma_spoofer(struct inode *inode, dev_t *out_dev, unsigned lo
 
 	if (inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
 		fi = get_fuse_inode(inode);
-		if (!fi || !fi->inode.i_mapping) {
-			SUSFS_LOGE("fi || fi->inode.i_mapping is NULL\n");
+		if (!fi) {
+			SUSFS_LOGE("fi is NULL\n");
 			return;
 		}
 		if (!test_bit(AS_FLAGS_SUS_KSTAT, &fi->inode.i_state) ||
@@ -555,11 +546,6 @@ void susfs_show_map_vma_spoofer(struct inode *inode, dev_t *out_dev, unsigned lo
 		target_dev = fi->inode.i_sb->s_dev;
 		is_fuse = true;
 		goto out_spoof_kstat;
-	}
-	
-	if (!inode->i_mapping) {
-		SUSFS_LOGE("inode->i_mapping is NULL\n");
-		return;
 	}
 
 	if (!test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state) ||
@@ -789,31 +775,7 @@ int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 static DEFINE_MUTEX(susfs_mutex_lock_open_redirect);
 static DEFINE_HASHTABLE(OPEN_REDIRECT_HLIST, 10);
-
-static int susfs_update_open_redirect_inode(struct st_susfs_open_redirect_hlist *new_entry) {
-	struct path path;
-	struct inode *inode;
-	int err = 0;
-
-	err = kern_path(new_entry->target_pathname, LOOKUP_FOLLOW, &path);
-	if (err) {
-		SUSFS_LOGE("failed opening file '%s'\n", new_entry->target_pathname);
-		return err;
-	}
-
-	inode = d_backing_inode(path.dentry);
-	if (!inode) {
-		SUSFS_LOGE("inode || inode->i_mapping is NULL\n");
-		err = -ENOENT;
-		goto out_path_put_target;
-	}
-
-	set_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_state);
-
-out_path_put_target:
-	path_put(&path);
-	return err;
-}
+DEFINE_STATIC_SRCU(susfs_srcu_open_redirect);
 
 void susfs_add_open_redirect(void __user **user_info) {
 	struct st_susfs_open_redirect info = {0};
@@ -1338,7 +1300,6 @@ out_copy_to_user:
 /* code is straightly borrowed from KernelSU's pkg_observer.c */
 #define SDCARD_ANDROID_PATH "/data/media/0/Android"
 extern void setup_selinux(const char *domain, struct cred *cred);
-extern bool susfs_is_current_ksu_domain(void);
 bool susfs_is_sdcard_android_data_decrypted __read_mostly = false;
 
 struct watch_dir {
