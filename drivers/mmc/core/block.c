@@ -1615,14 +1615,11 @@ static int mmc_blk_cqe_issue_rw_rq(struct mmc_queue *mq, struct request *req)
 {
 	struct mmc_queue_req *mqrq = req_to_mmc_queue_req(req);
 
-	if (req) {
-		mt_bio_queue_alloc(current, req->q, false);
-		mt_biolog_cqhci_check();
-		mt_biolog_cqhci_queue_task(mq->card->host, mqrq->brq.mrq.tag,
-			&(mqrq->brq.mrq));
-	}
-
 	mmc_blk_data_prep(mq, mqrq, 0, NULL, NULL);
+	mt_bio_queue_alloc(current, NULL, false);
+	mt_biolog_cqhci_check();
+	mt_biolog_cqhci_queue_task(mq->card->host, mqrq->brq.mrq.tag,
+		&(mqrq->brq.mrq));
 
 	return mmc_blk_cqe_start_req(mq->card->host, &mqrq->brq.mrq);
 }
@@ -2276,11 +2273,9 @@ static int mmc_blk_mq_issue_rw_rq(struct mmc_queue *mq,
 	int err = 0;
 
 	/* blocktag SD Card path only */
-	if (req) {
-		mt_bio_queue_alloc(current, req->q, true);
-		mt_biolog_mmcqd_req_check(true);
-		mt_biolog_mmcqd_req_start(host, true);
-	}
+	mt_bio_queue_alloc(current, NULL, true);
+	mt_biolog_mmcqd_req_check(true);
+	mt_biolog_mmcqd_req_start(host, true);
 
 	mmc_blk_rw_rq_prep(mqrq, mq->card, 0, mq);
 
@@ -2387,11 +2382,9 @@ static int mmc_blk_swcq_issue_rw_rq(struct mmc_queue *mq,
 	} else
 		return -EBUSY;
 
-	if (req) {
-		mt_bio_queue_alloc(current, req->q, false);
-		mt_biolog_mmcqd_req_check(false);
-		mt_biolog_mmcqd_req_start(host, false);
-	}
+	mt_bio_queue_alloc(current, NULL, false);
+	mt_biolog_mmcqd_req_check(false);
+	mt_biolog_mmcqd_req_start(host, false);
 	mq->mqrq[index].req = req;
 	atomic_set(&mqrq->index, index + 1);
 	atomic_set(&mq->mqrq[index].index, index + 1);

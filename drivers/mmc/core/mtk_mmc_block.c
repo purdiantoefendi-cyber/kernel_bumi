@@ -223,9 +223,8 @@ static struct mt_bio_context *mt_bio_curr_queue(struct request_queue *q,
 	for (i = 0; i < MMC_BIOLOG_CONTEXTS; i++)	{
 		if (ctx[i].pid == 0)
 			continue;
-		if ((!strncmp(ctx[i].comm, REQ_MMCQD0, strlen(REQ_MMCQD0)) ||
-		(qd_pid == ctx[i].pid) || (ctx[i].q && ctx[i].q == q)) &&
-		ctx[i].pid) {
+		if (!strncmp(ctx[i].comm, REQ_MMCQD0, strlen(REQ_MMCQD0)) ||
+			(qd_pid == ctx[i].pid) || (ctx[i].q && ctx[i].q == q)) {
 			return ext_sd ? &ctx[i+1] : &ctx[i];
 		}
 	}
