@@ -142,7 +142,6 @@ endif
 obj-$(CONFIG_MTK_LEGACY_THERMAL) += thermal/
 #obj-$(CONFIG_THERMAL) += thermalv1/
 obj-$(CONFIG_MTK_PLAT_SRAM_FLAG) += debug_latch/
-obj-$(CONFIG_MTK_DEBUG_TRACER)	+= debug_tracer/
 obj-$(CONFIG_MEDIATEK_CACHE_API) += cache/
 
 ifneq ($(CONFIG_MTK_BASE_POWER), y)
