@@ -168,15 +168,8 @@ void mt_bio_queue_alloc(struct task_struct *thread, struct request_queue *q,
 		if (ext_sd_setup_done)
 			break;
 		/* bypass more emmc wokers */
-		#ifdef CONFIG_MTK_EMMC_CQ_SUPPORT
-		/* SWCQ: 2 thread - exe_cq and kworker */
 		if ((i > 1) && !ext_sd)
 			break;
-		#else
-		/* CQHCI: only one thread - kworker */
-		if ((i > 0) && !ext_sd)
-			break;
-		#endif
 		if (ctx[i].pid == 0) {
 			if (ext_sd) {
 				ext_sd_setup_done = true;
@@ -688,30 +681,22 @@ void mt_biolog_cqhci_queue_task(unsigned int task_id, struct mmc_request *req)
 {
 	struct mt_bio_context *ctx;
 	struct mt_bio_context_task *tsk;
-#ifdef CONFIG_MMC_CQHCI
-	u32 req_flags = req->data->flags;
-#endif
 	unsigned long flags;
 
 	if (!req)
 		return;
 
 	tsk = mt_bio_curr_task_by_ctx_id(task_id,
-		&ctx, -1, false);
+		&ctx, CTX_MMCCMDQD0, false);
 	if (!tsk)
 		return;
 
 	spin_lock_irqsave(&ctx->lock, flags);
 
-#ifdef CONFIG_MMC_CQHCI
+#ifdef CONFIG_MTK_EMMC_HW_CQ
 	/* convert cqhci to legacy sbc arg */
-if (req_flags & MMC_DATA_READ)
-	tsk->arg = 1 << 30 |
-		(req->data->blocks & 0xFFFF);
-else if (req_flags & MMC_DATA_WRITE) {
-	tsk->arg = (req->data->blocks & 0xFFFF);
-	tsk->arg = tsk->arg & ~(1 << 30);
-}
+	tsk->arg = (!!(req->cmdq_req->cmdq_req_flags & DIR)) << 30 |
+		(req->cmdq_req->data.blocks & 0xFFFF);
 #else
 	if (req->sbc)
 		tsk->arg = req->sbc->arg;
@@ -741,7 +726,7 @@ void mt_biolog_cqhci_complete(unsigned int task_id)
 	unsigned long flags;
 
 	tsk = mt_bio_curr_task_by_ctx_id(task_id,
-		&ctx, -1, false);
+		&ctx, CTX_MMCCMDQD0, false);
 	if (!tsk)
 		return;
 
@@ -762,14 +747,6 @@ void mt_biolog_cqhci_complete(unsigned int task_id)
 	bytes = bytes << SECTOR_SHIFT;
 	busy_time = end_time - tsk->t[tsk_req_start];
 
-	/*
-	 * workaround: skip the IO which size is 0, please noted
-	 * that this issue doesn't exist in non-standard CQHCI driver,
-	 * it only happened in standard CQHCI driver.
-	 */
-	if (!bytes)
-		goto end;
-
 	tp = (write) ? &ctx->throughput.w : &ctx->throughput.r;
 	tp->usage += busy_time;
 	tp->size += bytes;
@@ -781,7 +758,7 @@ void mt_biolog_cqhci_complete(unsigned int task_id)
 
 	/* count doorbell to complete time in workload usage */
 	mt_bio_ctx_count_usage(ctx, tsk->t[tsk_req_start], end_time);
-end:
+
 	mt_pr_cmdq_tsk(tsk, tsk_isdone_end);
 
 	mt_bio_init_task(tsk);
