@@ -108,7 +108,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
-#include <mt-plat/mtk_pidmap.h>
 #ifdef CONFIG_MTK_TASK_TURBO
 #include <mt-plat/turbo_common.h>
 #endif

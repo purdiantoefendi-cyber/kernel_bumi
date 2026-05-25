@@ -186,7 +186,6 @@ obj-$(CONFIG_MTK_VPU_SUPPORT) += vpu/
 obj-$(CONFIG_MTK_CCU)	+= ccu/src/
 obj-$(CONFIG_MTK_BLOCK_TAG) += blocktag/
 obj-$(CONFIG_MTK_VIBRATOR) += vibrator/
-obj-$(CONFIG_MTK_PID_MAP) += pidmap/
 obj-$(CONFIG_MTK_JPEG) += jpeg/
 obj-$(CONFIG_MTK_VOW_SUPPORT)  += vow/
 ifeq ($(CONFIG_MACH_MT6833),y)
