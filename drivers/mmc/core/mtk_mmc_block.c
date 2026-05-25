@@ -296,7 +296,7 @@ EXPORT_SYMBOL_GPL(mtk_btag_pidlog_add_mmc);
 static void mt_bio_context_eval(struct mt_bio_context *ctx)
 {
 	struct mt_bio_context_task *tsk;
-	uint64_t min, period, tsk_start, usage, result;
+	uint64_t min, period, tsk_start;
 	int i;
 
 	min = ctx->period_end_t;
@@ -320,9 +320,8 @@ static void mt_bio_context_eval(struct mt_bio_context *ctx)
 		ctx->workload.percent = 1;
 	} else {
 		period = ctx->workload.period;
-		usage = ctx->workload.usage * 100;
-		result = div_u64(usage, period);
-		ctx->workload.percent = usage & (BIT_ULL(32) - 1);
+		ctx->workload.percent =
+		((__u32)ctx->workload.usage * 100) / (__u32)period;
 	}
 
 	mtk_btag_throughput_eval(&ctx->throughput);
