@@ -64,6 +64,5 @@ ccflags-y += \
 		-DMTK_K14_CPU_BOOST
 endif
 
-obj-$(CONFIG_MTK_CPU_CTRL_CFP) += cpu_ctrl_cfp.o
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/include/
 ccflags-y += -I$(srctree)drivers/misc/mediatek/performance/include/

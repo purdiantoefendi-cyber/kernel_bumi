@@ -9,12 +9,9 @@
 #include <linux/platform_device.h>
 
 #include "tchbst.h"
-#include "io_ctrl.h"
 #include "boost_ctrl.h"
 #include "mtk_perfmgr_internal.h"
 #include "topo_ctrl.h"
-#include "uload_ind.h"
-#include "syslimiter.h"
 
 #define API_READY 0
 
@@ -81,12 +78,7 @@ static int __init init_perfmgr(void)
 
 	init_boostctrl(perfmgr_root);
 	init_tchbst(perfmgr_root);
-	init_perfctl(perfmgr_root);
-	syslimiter_init(perfmgr_root);
 
-#ifdef CONFIG_MTK_LOAD_TRACKER
-	init_uload_ind(NULL);
-#endif
 	return 0;
 }
 device_initcall(init_perfmgr);
