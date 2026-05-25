@@ -2549,8 +2549,6 @@
 		/* Reference clock control mode */
 		/* SW mode: 0, Half-HW mode: 1, HW mode: 2 */
 		mediatek,refclk_ctrl = <2>;
-
-		mediatek,ufs-qos;
 	};
 
 	msdc1_ins:msdc1_ins {
