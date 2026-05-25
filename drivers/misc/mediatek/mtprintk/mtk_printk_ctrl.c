@@ -31,6 +31,9 @@ extern unsigned long long sched_clock(void);
  * 2: uart printk always enable
  * 2 only set in lk phase by cmline
  */
+int printk_disable_uart;
+
+module_param_named(disable_uart, printk_disable_uart, int, 0644);
 
 #ifdef CONFIG_MTK_ENG_BUILD
 int printk_ctrl;
@@ -47,6 +50,14 @@ bool mt_get_uartlog_status(void)
 	else if ((printk_ctrl == 0) || (printk_ctrl == 2))
 		return true;
 	return true;
+}
+
+void set_uartlog_status(bool value)
+{
+#ifdef CONFIG_MTK_ENG_BUILD
+	printk_disable_uart = value ? 0 : 1;
+	pr_info("set uart log status %d.\n", value);
+#endif
 }
 
 void mt_disable_uart(void)
@@ -71,46 +82,17 @@ static int mt_printk_ctrl_show(struct seq_file *m, void *v)
 	seq_puts(m, "0:   printk uart disable\n");
 	seq_puts(m, "1:   printk uart enable\n");
 #endif
-#ifdef CONFIG_LOG_TOO_MUCH_WARNING
-	seq_puts(m, "2:   printk too much disable\n");
-	seq_puts(m, "3:   printk too much enable\n");
-	seq_puts(m, "4:   printk too much log in 10 seconds.\n");
-	seq_puts(m,
-"xxx: printk too much detect count(xxx represents for a integer > 100)\n");
-#endif
+
 	seq_puts(m, "=== mt printk controller ===\n\n");
 	seq_printf(m, "kernel log buffer len: %dKB\n", log_buf_len_get()/1024);
 #ifdef CONFIG_PRINTK_MTK_UART_CONSOLE
 	seq_printf(m, "printk uart enable: %d\n", mt_get_uartlog_status());
 #endif
-#ifdef CONFIG_LOG_TOO_MUCH_WARNING
-	seq_printf(m, "printk too much enable: %d.\n", get_logtoomuch_enable());
-	seq_printf(m, "printk too much detect count: %d\n", get_detect_count());
-#endif
+
 	return 0;
 }
 
-#ifdef CONFIG_LOG_TOO_MUCH_WARNING
-void mt_print_much_log(void)
-{
-	unsigned long long t1 = 0;
-	unsigned long long t2 = 0;
-	unsigned long print_num = 0;
 
-	t1 = sched_clock();
-	pr_info("printk debug log: start time: %lld.\n", t1);
-
-	for (;;) {
-		t2 = sched_clock();
-		if ((t2 - t1) / 1000000 > 10 * 1000)
-			break;
-		pr_info("printk debug log: the %ld line, time: %lld.\n",
-			print_num++, t2);
-		__delay(5);
-	}
-	pr_info("mt log total write %ld line in 10 second.\n", print_num);
-}
-#endif
 
 static ssize_t mt_printk_ctrl_write(struct file *filp,
 	const char *ubuf, size_t cnt, loff_t *data)
@@ -141,24 +123,9 @@ static ssize_t mt_printk_ctrl_write(struct file *filp,
 		mt_enable_uart();
 		break;
 #endif
-#ifdef CONFIG_LOG_TOO_MUCH_WARNING
-	case 2:
-		set_logtoomuch_enable(0);
-		break;
-	case 3:
-		set_logtoomuch_enable(1);
-		break;
-	case 4:
-		mt_print_much_log();
-		break;
-	default:
-		if (val > 100)
-			set_detect_count(val);
-		break;
-#else
+
 	default:
 		break;
-#endif
 	}
 	return cnt;
 }
