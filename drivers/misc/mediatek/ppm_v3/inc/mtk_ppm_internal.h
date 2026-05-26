@@ -138,18 +138,6 @@ static const struct file_operations ppm_ ## name ## _proc_fops = {            \
 	do { if ((lv) & ppm_func_lv_mask)	\
 		ppm_info("<< %s():%d\n", __func__, __LINE__); } while (0)
 
-/* cpufreq */
-
-static inline void mtk_cpu_update_policy(void)
-{
-#ifdef CONFIG_CPU_FREQ
-	if (strcmp(CONFIG_MTK_PLATFORM, "mt6779"))
-		ppm_info("trigger cpufreq_update_policy(*)\n");
-	cpufreq_update_policy(0); /* little core */
-	cpufreq_update_policy(CORE_NUM_L); /* big core */
-#endif
-}
-
 /*==============================================================*/
 /* Enum                                                         */
 /*==============================================================*/
@@ -234,6 +222,8 @@ struct ppm_cluster_info {
 	struct cpufreq_frequency_table *dvfs_tbl;	/* from DVFS driver */
 	int	doe_max;
 	int	doe_min;
+	struct freq_qos_request *max_freq_req;
+	struct freq_qos_request *min_freq_req;
 };
 
 struct ppm_data {
@@ -327,6 +317,8 @@ extern void aee_rr_rec_ppm_min_pwr_bgt(u32 val);
 extern void aee_rr_rec_ppm_policy_mask(u32 val);
 extern void aee_rr_rec_ppm_waiting_for_pbm(u8 val);
 #endif
+
+extern void ppm_init_qos_request(void);
 
 #ifdef __cplusplus
 }
