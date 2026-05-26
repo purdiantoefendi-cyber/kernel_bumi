@@ -36,8 +36,6 @@
 #include "u_os_desc.h"
 #include "configfs.h"
 
-#include "usb_boost.h"
-
 #define FUNCTIONFS_MAGIC	0xa647361 /* Chosen by a honest dice roll ;) */
 
 /* Reference counter handling */
@@ -997,9 +995,6 @@ static ssize_t ffs_epfile_io(struct file *file, struct ffs_io_data *io_data)
 			goto error_mutex;
 		}
 	}
-
-	if (!strncmp(epfile->ffs->dev_name, "mtp", 3))
-		usb_boost();
 
 	spin_lock_irq(&epfile->ffs->eps_lock);
 
