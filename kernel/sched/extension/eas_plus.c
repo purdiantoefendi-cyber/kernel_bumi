@@ -4,9 +4,6 @@
  */
 #include "sched.h"
 #include <trace/events/sched.h>
-#ifdef CONFIG_MTK_TASK_TURBO
-#include <mt-plat/turbo_common.h>
-#endif
 #include "../../drivers/misc/mediatek/base/power/include/mtk_upower.h"
 
 DEFINE_PER_CPU(struct task_struct*, migrate_task);
