@@ -4436,7 +4436,6 @@ static noinline void __schedule_bug(struct task_struct *prev)
 
 	dump_stack();
 	add_taint(TAINT_WARN, LOCKDEP_STILL_OK);
-	BUG_ON(1);
 }
 
 /*
