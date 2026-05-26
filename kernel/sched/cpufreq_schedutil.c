@@ -19,9 +19,6 @@
 #include <trace/events/power.h>
 #include "cpufreq_schedutil.h"
 
-void (*cpufreq_notifier_fp)(int cluster_id, unsigned long freq);
-EXPORT_SYMBOL(cpufreq_notifier_fp);
-
 struct sugov_tunables {
 	struct gov_attr_set	attr_set;
 	unsigned int		up_rate_limit_us;
@@ -532,12 +529,6 @@ static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu, struct sugov_p
 		WRITE_ONCE(sg_policy->limits_changed, true);
 }
 
-static inline void __cpufreq_notifier_fp(int cid, unsigned int next_f)
-{
-	if (cpufreq_notifier_fp)
-		cpufreq_notifier_fp(cid, next_f);
-}
-
 static void sugov_update_single(struct update_util_data *hook, u64 time,
 				unsigned int flags)
 {
@@ -604,7 +595,6 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	}
 #endif
 
-	__cpufreq_notifier_fp(cid, next_f);
 	raw_spin_unlock(&sg_policy->update_lock);
 
 }
