@@ -368,7 +368,7 @@ static int qos_prefetch_cpu_freq_callback(struct notifier_block *nb,
 		unsigned long val, void *data)
 {
 	struct cpufreq_freqs *freq = data;
-	int cpu = freq->cpu;
+	int cpu = freq->policy->cpu;
 #ifdef QOS_PREFETCH_USE_TIMER
 	unsigned long expires;
 #endif /* QOS_PREFETCH_USE_TIMER */
