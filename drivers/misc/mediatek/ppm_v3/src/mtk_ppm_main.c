@@ -1041,50 +1041,11 @@ static int ppm_main_pdrv_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int ppm_notifier_call(struct notifier_block *self,
-				unsigned long event, void *data)
-{
-	struct cpufreq_policy *p = data;
-	struct ppm_client_req *c_req = &(ppm_main_info.client_req);
-	unsigned long max_idx, min_idx;
-	unsigned long max_freq, min_freq;
-	int cl;
-
-	if (event != CPUFREQ_ADJUST || cobra_init_done == 0)
-		return 0;
-
-	if (p->cpu == 0)
-		cl = 0;
-	else
-		cl = 1;
-
-
-	max_idx = c_req->cpu_limit[cl].max_cpufreq_idx;
-	min_idx = c_req->cpu_limit[cl].min_cpufreq_idx;
-
-	max_freq = ppm_main_info.cluster_info[cl].dvfs_tbl[max_idx].frequency;
-	min_freq = ppm_main_info.cluster_info[cl].dvfs_tbl[min_idx].frequency;
-
-	ppm_ver("cpufreq_verify_within_limits: max: %ld min: %ld\n",
-			max_freq, min_freq);
-
-	cpufreq_verify_within_limits(p, min_freq, max_freq);
-
-	return 0;
-}
-
-
-static struct notifier_block ppm_notifier = {
-	.notifier_call = ppm_notifier_call,
-};
-
 static int __init ppm_main_init(void)
 {
 	int ret = 0;
 
 	FUNC_ENTER(FUNC_LV_MODULE);
-
-	cpufreq_register_notifier(&ppm_notifier, CPUFREQ_POLICY_NOTIFIER);
 
 	/* ppm data init */
 	ret = ppm_main_data_init();
