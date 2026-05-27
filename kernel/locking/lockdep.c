@@ -3408,7 +3408,6 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 #endif
 #ifdef MTK_LOCK_MONITOR
 	hlock->timestamp = sched_clock();
-	hlock->acquired = true;
 #endif
 
 	if (check && !mark_irqflags(curr, hlock))
@@ -4125,9 +4124,6 @@ __lock_contended(struct lockdep_map *lock, unsigned long ip)
 		stats->contending_point[contending_point]++;
 	if (lock->cpu != smp_processor_id())
 		stats->bounces[bounce_contended + !!hlock->read]++;
-#ifdef MTK_LOCK_MONITOR
-	hlock->acquired = false;
-#endif
 }
 
 static void
@@ -4178,16 +4174,13 @@ __lock_acquired(struct lockdep_map *lock, unsigned long ip)
 
 	lock->cpu = cpu;
 	lock->ip = ip;
-#ifdef MTK_LOCK_MONITOR
-	hlock->acquired = true;
-#endif
 }
 
 void lock_contended(struct lockdep_map *lock, unsigned long ip)
 {
 	unsigned long flags;
 
-	if (unlikely(!lock_stat || !debug_locks) && !lock_mon_enable)
+	if (unlikely(!lock_stat || !debug_locks))
 		return;
 
 	if (unlikely(current->lockdep_recursion))
@@ -4207,7 +4200,7 @@ void lock_acquired(struct lockdep_map *lock, unsigned long ip)
 {
 	unsigned long flags;
 
-	if (unlikely(!lock_stat || !debug_locks) && !lock_mon_enable)
+	if (unlikely(!lock_stat || !debug_locks))
 		return;
 
 	if (unlikely(current->lockdep_recursion))
@@ -4221,53 +4214,6 @@ void lock_acquired(struct lockdep_map *lock, unsigned long ip)
 	raw_local_irq_restore(flags);
 }
 EXPORT_SYMBOL_GPL(lock_acquired);
-#elif defined(MTK_LOCK_MONITOR)
-static void
-set_acquired(struct lockdep_map *lock, unsigned long ip, bool acquired)
-{
-	struct task_struct *curr = current;
-	struct held_lock *hlock;
-	unsigned int depth = curr->lockdep_depth;
-	int i;
-
-	if (DEBUG_LOCKS_WARN_ON(!depth))
-		return;
-
-	hlock = find_held_lock(curr, lock, depth, &i);
-	if (!hlock)
-		return;
-
-	if (hlock->instance != lock)
-		return;
-
-	hlock->acquired = acquired;
-}
-
-static void
-set_lock_acquired(struct lockdep_map *lock, unsigned long ip, bool acquired)
-{
-	unsigned long flags;
-
-	if (unlikely(current->lockdep_recursion))
-		return;
-
-	raw_local_irq_save(flags);
-	check_flags(flags);
-	current->lockdep_recursion = 1;
-	set_acquired(lock, ip, acquired);
-	current->lockdep_recursion = 0;
-	raw_local_irq_restore(flags);
-}
-
-void lock_contended(struct lockdep_map *lock, unsigned long ip)
-{
-	set_lock_acquired(lock, ip, false);
-}
-
-void lock_acquired(struct lockdep_map *lock, unsigned long ip)
-{
-	set_lock_acquired(lock, ip, true);
-}
 #endif
 
 /*
@@ -5235,8 +5181,7 @@ held_lock_save_trace(struct stack_trace *trace, unsigned long *entries)
 	if (trace->nr_entries != 0 &&
 	    trace->entries[trace->nr_entries - 1] == ULONG_MAX)
 		trace->nr_entries--;
-	if (trace->nr_entries > 0)
-		trace->nr_entries--;
+	trace->nr_entries--;
 }
 
 static void held_lock_show_trace(struct held_lock *hlock, int output)
@@ -5616,10 +5561,8 @@ lockdep_check_held_locks(struct task_struct *curr, bool en, bool aee)
 
 			warn_locks++;
 			snprintf(buf_lock, sizeof(buf_lock),
-				 "[%p] (%s) %s by %s/%d[%c] on CPU#%d from [%lld.%06lu]%s",
-				 hlock->instance, name,
-				 hlock->acquired ? "held" : "needed",
-				 curr->comm, curr->pid,
+				 "[%p] (%s) held/waited by %s/%d[%c] on CPU#%d from [%lld.%06lu]%s",
+				 hlock->instance, name, curr->comm, curr->pid,
 				 task_state_to_char(curr), task_cpu(curr),
 				 sec_high(hlock->timestamp),
 				 sec_low(hlock->timestamp),
