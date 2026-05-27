@@ -133,7 +133,7 @@ int xhci_halt(struct xhci_hcd *xhci)
 	xhci_quiesce(xhci);
 
 	ret = xhci_handshake(&xhci->op_regs->status,
-			STS_HALT, STS_HALT, 2 * XHCI_MAX_HALT_USEC);
+			STS_HALT, STS_HALT, XHCI_MAX_HALT_USEC);
 	if (ret) {
 		if (!(xhci->xhc_state & XHCI_STATE_DYING))
 		xhci_warn(xhci, "Host halt failed, %d\n", ret);
