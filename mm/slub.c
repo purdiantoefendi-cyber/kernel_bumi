@@ -706,7 +706,7 @@ static void print_trailer(struct kmem_cache *s, struct page *page, u8 *p)
 		print_section(KERN_ERR, "Padding  ", p + off,
 			      size_from_object(s) - off);
 
-	WARN_ON(1);
+	dump_stack();
 }
 
 void object_err(struct kmem_cache *s, struct page *page,
@@ -732,7 +732,7 @@ static __printf(3, 4) void slab_err(struct kmem_cache *s, struct page *page,
 	va_end(args);
 	slab_bug(s, "%s", buf);
 	print_page_info(page);
-	WARN_ON(1);
+	dump_stack();
 }
 
 static void init_object(struct kmem_cache *s, void *object, u8 val)
@@ -1029,7 +1029,7 @@ static void trace(struct kmem_cache *s, struct page *page, void *object,
 			print_section(KERN_INFO, "Object ", (void *)object,
 					s->object_size);
 
-		WARN_ON(1);
+		dump_stack();
 	}
 }
 
