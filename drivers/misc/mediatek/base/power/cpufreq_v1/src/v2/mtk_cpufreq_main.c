@@ -1208,7 +1208,7 @@ static void ppm_limit_callback(struct ppm_client_req req)
 /*
  * cpufreq driver
  */
-static int _mt_cpufreq_verify(struct cpufreq_policy *policy)
+static int _mt_cpufreq_verify(struct cpufreq_policy_data *policy)
 {
 	struct mt_cpu_dvfs *p;
 	int ret;
