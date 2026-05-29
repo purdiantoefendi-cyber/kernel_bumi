@@ -46,10 +46,10 @@ do { \
 } while (0)
 
 #define mtktscharger_dprintk_always(fmt, args...) \
-	pr_notice("[Thermal/tzcharger]" fmt, ##args)
+	pr_debug("[Thermal/TZcharger]" fmt, ##args)
 
 #define mtktscharger_pr_notice(fmt, args...) \
-	pr_notice("[Thermal/tzcharger]" fmt, ##args)
+	pr_debug("[Thermal/TZcharger]" fmt, ##args)
 
 #if defined(CONFIG_MEDIATEK_MT6577_AUXADC)
 struct iio_channel *thermistor_ch2;
@@ -885,7 +885,7 @@ void mtkts_btscharger_prepare_table(int table_num)
 		break;
 	}
 
-	pr_notice("[Thermal/TZ/BTSCHARGER] %s table_num=%d\n",
+	pr_debug("[Thermal/TZ/BTSCHARGER] %s table_num=%d\n",
 						__func__, table_num);
 }
 static int mtktscharger_read(struct seq_file *m, void *v)
