@@ -1638,10 +1638,10 @@ static void _mtk_crtc_lye_addon_module_disconnect(
 	if (mtk_crtc->is_dual_pipe) {
 		addon_data_dual = mtk_addon_get_scenario_data_dual
 			(__func__, crtc, lye_state->scn[drm_crtc_index(crtc)]);
-	}
 
-	if (!addon_data_dual) {
-		return;
+		if (!addon_data_dual) {
+			return;
+		}
 	}
 
 	for (i = 0; i < addon_data->module_num; i++) {
@@ -3250,13 +3250,13 @@ static void ddp_cmdq_cb(struct cmdq_cb_data data)
 		if (cmdq_buf) {
 			ovl_dsi_seq = *(unsigned int *)(cmdq_buf->va_base +
 					DISP_SLOT_OVL_DSI_SEQ(id));
-		}
 
-		if (ovl_dsi_seq) {
-			if (id == 0)
-				mtk_drm_trace_async_end("OVL0-DSI|%d", ovl_dsi_seq);
-			else if (id == 2)
-				mtk_drm_trace_async_end("OVL2-WDMA|%d", ovl_dsi_seq);
+			if (ovl_dsi_seq) {
+				if (id == 0)
+					mtk_drm_trace_async_end("OVL0-DSI|%d", ovl_dsi_seq);
+				else if (id == 2)
+					mtk_drm_trace_async_end("OVL2-WDMA|%d", ovl_dsi_seq);
+			}
 		}
 	}
 
