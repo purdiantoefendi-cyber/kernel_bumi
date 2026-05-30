@@ -510,7 +510,7 @@ static int _cpufreq_set_locked(struct cpufreq_policy *policy,
 	freqs.old = cur_khz;
 	freqs.new = target_khz_orig;
 	if (policy) {
-		freqs.cpu = policy->cpu;
+		freqs.policy->cpu = policy->cpu;
 		cpufreq_freq_transition_begin(policy, &freqs);
 	}
 #endif

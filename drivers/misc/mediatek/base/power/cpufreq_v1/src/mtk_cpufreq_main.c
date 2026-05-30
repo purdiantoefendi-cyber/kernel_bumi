@@ -740,7 +740,7 @@ target_khz, target_volt, num_online_cpus(), cur_khz);
 	freqs.old = cur_khz;
 	freqs.new = target_khz_orig;
 	if (policy) {
-		freqs.cpu = policy->cpu;
+		freqs.policy->cpu = policy->cpu;
 		cpufreq_freq_transition_begin(policy, &freqs);
 	}
 
