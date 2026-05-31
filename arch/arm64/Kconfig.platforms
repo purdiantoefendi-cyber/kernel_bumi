@@ -287,6 +287,7 @@ config MACH_MT6768
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
 	select ARM_DSU_PMU if ARM64 && PERF_EVENTS
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -401,6 +402,7 @@ config MACH_MT6771
 
 config MACH_MT6779
 	bool "MediaTek MT6779"
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select EXT4_FS
 	select EXT4_FS_ENCRYPTION
 	select EXT4_FS_SECURITY
@@ -439,6 +441,7 @@ config MACH_MT6781
 	bool "MediaTek MT6781"
 	select ARM_MTK_NEW_ARCH_CPUIDLE
 	select ARM_DSU_PMU
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select MTK_TIMER_SYSTIMER
 	select IRQ_DOMAIN
 	select MFD_SYSCON
@@ -495,6 +498,7 @@ config MACH_MT6785
 	bool "MediaTek MT6785"
 	select ARCH_MEDIATEK
 	select ARM_DSU_PMU
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select MTK_TIMER_SYSTIMER
 	select MTK_GIC_V3_EXT
 	select PINCTRL
@@ -550,6 +554,7 @@ config MACH_MT6885
 	select GENERIC_CLOCKEVENTS
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -622,6 +627,7 @@ config MACH_MT6833
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
 	select ARM_DSU_PMU if ARM64 && PERF_EVENTS
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select HIE
@@ -696,6 +702,7 @@ config MACH_MT6853
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
 	select ARM_DSU_PMU if ARM64 && PERF_EVENTS
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -767,6 +774,7 @@ config MACH_MT6873
 	select GENERIC_CLOCKEVENTS
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -840,6 +848,7 @@ config MACH_MT6877
 	select GENERIC_CLOCKEVENTS
 	select ARM_AMBA
 	select ARM_DSU_PMU
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -911,6 +920,7 @@ config MACH_MT6893
 	select GENERIC_CLOCKEVENTS
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
@@ -999,6 +1009,7 @@ config MACH_MT8195
 	select GENERIC_CLOCKEVENTS
 	select ARCH_HAS_CPUFREQ
 	select ARM_AMBA
+	select ARM64_USE_LSE_ATOMICS if ARM64 && JUMP_LABEL
 	select CPU_V7
 	select HAVE_SMP
 	select NEED_MACH_MEMORY_H
