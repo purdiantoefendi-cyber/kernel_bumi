@@ -128,6 +128,8 @@ config ANDROID_DEFAULT_SETTING
 	select IPV6_ROUTER_PREF
 	select IPV6_VTI
 	select JOYSTICK_XPAD
+	select JOYSTICK_XPAD_FF
+	select JOYSTICK_XPAD_LEDS
 	select KFENCE
 	select L2TP
 	select MAGIC_SYSRQ
@@ -351,8 +353,10 @@ config MTK_ANDROID_DEFAULT_SETTING
     select HID_CHICONY
     select HID_CYPRESS
     select HID_DRAGONRISE
+	select DRAGONRISE_FF
     select HID_EZKEY
     select HID_GREENASIA
+	select GREENASIA_FF
     select HID_GYRATION
     select HID_KENSINGTON
     select HID_KYE
@@ -361,6 +365,7 @@ config MTK_ANDROID_DEFAULT_SETTING
     select HID_MICROSOFT
     select HID_MONTEREY
     select HID_PANTHERLORD
+	select PANTHERLORD_FF
     select HID_PETALYNX
     select HID_SAMSUNG
     select HID_SMARTJOYPLUS
@@ -369,6 +374,7 @@ config MTK_ANDROID_DEFAULT_SETTING
     select HID_TOPSEED
     select HID_TWINHAN
     select HID_ZEROPLUS
+	select HID_WIIMOTE
 	select HW_RANDOM
 	select INET6_AH
 	select INET6_TUNNEL
