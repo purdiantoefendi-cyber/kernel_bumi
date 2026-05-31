@@ -372,6 +372,7 @@ config MTK_ANDROID_DEFAULT_SETTING
     select HID_PETALYNX
     select HID_SAMSUNG
     select HID_SMARTJOYPLUS
+	select HID_STEAM
     select HID_SUNPLUS
     select HID_THRUSTMASTER
     select HID_TOPSEED
