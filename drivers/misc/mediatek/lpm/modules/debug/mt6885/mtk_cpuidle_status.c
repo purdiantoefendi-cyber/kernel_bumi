@@ -12,6 +12,7 @@
 #include <linux/pm_qos.h>
 #include <linux/tick.h>
 #include <linux/timer.h>
+#include <mboot_params.h>
 
 #include <mtk_lpm.h>
 #include <mtk_lp_plat_reg.h>
