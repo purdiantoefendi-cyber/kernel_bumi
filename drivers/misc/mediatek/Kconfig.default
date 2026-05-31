@@ -379,6 +379,7 @@ config MTK_ANDROID_DEFAULT_SETTING
     select HID_TOPSEED
     select HID_TWINHAN
     select HID_ZEROPLUS
+	select HID_WACOM
 	select HID_WIIMOTE
 	select HW_RANDOM
 	select INET6_AH
