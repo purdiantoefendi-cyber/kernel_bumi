@@ -294,6 +294,7 @@ config ANDROID_DEFAULT_SETTING
 	select XFRM_INTERFACE
 	select XFRM_STATISTICS
 	select XFRM_USER
+	select ZRAM
 	help
 	  This option enables the android base config by default which
 	  definded in android-base.config and android-base-conditional.xml
