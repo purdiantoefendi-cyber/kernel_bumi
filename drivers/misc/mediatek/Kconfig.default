@@ -13,6 +13,7 @@ config ANDROID_DEFAULT_SETTING
 	select AUDIT
 	select BINFMT_ELF
 	select BINFMT_SCRIPT
+	select BLK_CGROUP
 	select BLK_DEV_DM
 	select BLK_DEV_INITRD
 	select BLK_DEV_LOOP
@@ -33,6 +34,7 @@ config ANDROID_DEFAULT_SETTING
 	select CPU_FREQ_TIMES
 	select CPU_SW_DOMAIN_PAN if ARM
 	select CROSS_MEMORY_ATTACH
+	select CPUSETS
 	select CRYPTO_AES
 	select CRYPTO_CBC
 	select CRYPTO_ECB
@@ -261,6 +263,8 @@ config ANDROID_DEFAULT_SETTING
 	select TIMERFD
 	select TTY
 	select TUN
+	select UCLAMP_TASK
+	select UCLAMP_TASK_GROUP
 	select UHID
 	select UID_SYS_STATS
 	select UNICODE
