@@ -73,8 +73,8 @@ config ANDROID_DEFAULT_SETTING
 	select HID_GENERIC
 	select HID_NINTENDO
 	select HID_PLAYSTATION
-	select HIDRAW
 	select HID_SONY
+	select HIDRAW
 	select HIGH_RES_TIMERS
 	select IKCONFIG
 	select IKCONFIG_PROC
@@ -339,6 +339,31 @@ config MTK_ANDROID_DEFAULT_SETTING
 	select FIB_RULES
 	select HAVE_MTK_MC
 	select HAVE_NET_DSA
+    select HID_A4TECH
+    select HID_APPLE
+    select HID_BELKIN
+    select HID_CHERRY
+    select HID_CHICONY
+    select HID_CYPRESS
+    select HID_DRAGONRISE
+    select HID_EZKEY
+    select HID_GREENASIA
+    select HID_GYRATION
+    select HID_KENSINGTON
+    select HID_KYE
+    select HID_LOGITECH
+    select HID_MAGICMOUSE
+    select HID_MICROSOFT
+    select HID_MONTEREY
+    select HID_PANTHERLORD
+    select HID_PETALYNX
+    select HID_SAMSUNG
+    select HID_SMARTJOYPLUS
+    select HID_SUNPLUS
+    select HID_THRUSTMASTER
+    select HID_TOPSEED
+    select HID_TWINHAN
+    select HID_ZEROPLUS
 	select HW_RANDOM
 	select INET6_AH
 	select INET6_TUNNEL
@@ -460,6 +485,18 @@ config MTK_ANDROID_DEFAULT_SETTING
 	select TMPFS
 	select USB_CONFIGFS_F_MTP
 	select USB_CONFIGFS_F_PTP
+    select USB_STORAGE
+    select USB_STORAGE_DATAFAB
+    select USB_STORAGE_FREECOM
+    select USB_STORAGE_ISD200
+    select USB_STORAGE_USBAT
+    select USB_STORAGE_SDDR09
+    select USB_STORAGE_SDDR55
+    select USB_STORAGE_JUMPSHOT
+    select USB_STORAGE_ALAUDA
+    select USB_STORAGE_ONETOUCH
+    select USB_STORAGE_KARMA
+    select USB_STORAGE_CYPRESS_ATACB
 	select WEXT_PRIV
 	select WEXT_PROC
 	select WIRELESS
