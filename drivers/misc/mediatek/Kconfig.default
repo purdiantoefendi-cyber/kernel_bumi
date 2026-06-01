@@ -18,6 +18,8 @@ config ANDROID_DEFAULT_SETTING
 	select BLK_DEV_INITRD
 	select BLK_DEV_LOOP
 	select BLK_DEV_RAM
+	select BLK_INLINE_ENCRYPTION
+	select BLK_INLINE_ENCRYPTION_FALLBACK
 	select BLOCK
 	select BPF_LSM
 	select BPF_JIT
@@ -36,6 +38,7 @@ config ANDROID_DEFAULT_SETTING
 	select CPU_SW_DOMAIN_PAN if ARM
 	select CROSS_MEMORY_ATTACH
 	select CPUSETS
+	select CFQ_GROUP_IOSCHED
 	select CRYPTO_AES
 	select CRYPTO_CBC
 	select CRYPTO_ECB
@@ -85,6 +88,7 @@ config ANDROID_DEFAULT_SETTING
 	select IKCONFIG
 	select IKCONFIG_PROC
 	select IKPROC
+	select INCREMENTAL_FS
 	select INET
 	select INET6_ESP
 	select INET6_IPCOMP
@@ -221,6 +225,7 @@ config ANDROID_DEFAULT_SETTING
 	select NF_SOCKET_IPV4
 	select NF_SOCKET_IPV6
 	select NO_HZ
+	select OVERLAY_FS
 	select PACKET
 	select PLAYSTATION_FF
 	select SONY_FF
@@ -263,6 +268,7 @@ config ANDROID_DEFAULT_SETTING
 	select SUSPEND
 	select SWP_EMULATION if ARM64
 	select SYNC_FILE
+	select SYN_COOKIES
 	select SYSFS
 	select TASK_IO_ACCOUNTING
 	select TASKSTATS
@@ -292,6 +298,7 @@ config ANDROID_DEFAULT_SETTING
 	select WIREGUARD
 	select XDP_SOCKETS
 	select XFRM_INTERFACE
+	select XFRM_MIGRATE
 	select XFRM_STATISTICS
 	select XFRM_USER
 	select ZRAM
