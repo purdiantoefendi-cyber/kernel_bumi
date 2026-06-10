@@ -802,9 +802,9 @@ page_owner=on loop.max_part=7";
 	};
 
 	cache_parity {
-		compatible = "mediatek,cache_parity";
-		version = <2>;
-		err_level = <0>;
+		compatible = "mediatek,cache_parity", "mediatek,mt6873-cache-parity";
+		ecc-irq-support = <1>;
+		arm_dsu_ecc_hwirq = <32>;
 		interrupts = <GIC_SPI 1 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 3 IRQ_TYPE_LEVEL_HIGH>,
