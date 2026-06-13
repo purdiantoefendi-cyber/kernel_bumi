@@ -18,7 +18,7 @@ jobs:
           ref: diantk   # branch kamu
           fetch-depth: 0   # penting agar bisa ambil history penuh
           submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
-curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.1.0-legacy-susfs
+        run : curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.1.0-legacy-susfs
 
       # Langkah 2: Install Dependensi
       - name: Install Dependencies
