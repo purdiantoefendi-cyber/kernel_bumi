@@ -5,8 +5,8 @@ on:
     inputs:
       branch: { description: 'Branch', required: true }
       defconfig: { description: 'Defconfig', required: true, default: 'earth_defconfig' }
-      kernelsu_url: { description: 'Custom KSU URL', required: false, default: 'https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh' }
-      kernelsu_branch: { description: 'KSU Branch', required: false, default: 'master' }
+      kernelsu_url: { description: 'Custom KSU URL', required: false, default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh' }
+      kernelsu_branch: { description: 'KSU Branch', required: false, default: 'v3.1.0-legacy-susfs' }
 
 jobs:
   build:
