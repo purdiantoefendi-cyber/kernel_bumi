@@ -63,4 +63,6 @@ jobs:
           *.zip
           out/arch/arm64/boot/Image.gz*
           out/arch/arm64/boot/dts/**/*.dtb
+          out/arch/arm64/boot/dts/**/*.gz
+          out/arch/arm64/boot/dts/**/*.gz-dtb
         retention-days: 7
