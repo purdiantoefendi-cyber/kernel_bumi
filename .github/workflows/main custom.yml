@@ -39,7 +39,7 @@ jobs:
         export KBUILD_BUILD_HOST="DianTk_Modz"
         
         # Argumen compiler
-        ARGS="ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1"
+        ARGS="ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1"
         
         # Membuat file .config (Diperbaiki: format defconfig dan penghapusan || true)
         make O=out $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log
