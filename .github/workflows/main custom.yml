@@ -12,45 +12,59 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
       with:
         ref: ${{ github.event.inputs.branch }}
         submodules: recursive
 
-    - name: Setup and Build
+    - name: Set Timezone & Variables
+      run: |
+        # Mengatur zona waktu ke Asia/Jakarta
+        sudo timedatectl set-timezone Asia/Jakarta
+        
+        # Menyimpan BUILD_TIME ke environment GitHub agar bisa dipakai di step ZIP dan Upload
+        echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
+        
+        # Menyimpan argumen compiler ke environment GitHub
+        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1" >> $GITHUB_ENV
+
+    - name: Install Dependencies
       run: |
         export DEBIAN_FRONTEND=noninteractive
         sudo apt-get update
         sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
-        
-        export TZ="Asia/Jakarta"
-        echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
 
-        # Download AOSP Clang r547379
+    - name: Setup AOSP Clang
+      run: |
         mkdir clang
         wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz | tar -xz -C clang
-        export PATH=$PWD/clang/bin:$PATH
         
-        # Menjalankan script custom KernelSU dari input URL
+        # Menambahkan Clang ke PATH global runner
+        echo "$PWD/clang/bin" >> $GITHUB_PATH
+
+    - name: Setup KernelSU
+      run: |
         curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s ${{ github.event.inputs.kernelsu_branch }}
 
-        export ARCH=arm64
-        export KBUILD_BUILD_USER="DianTk"
-        export KBUILD_BUILD_HOST="DianTk_Modz"
-        
-        # Argumen compiler
-        ARGS="ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1"
-        
-        # Membuat file .config (Diperbaiki: format defconfig dan penghapusan || true)
+    - name: Generate Defconfig
+      run: |
+        # $ARGS didapat dari step "Set Timezone & Variables"
         make O=out $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log
-        
+
+    - name: Compile Kernel
+      run: |
         # Proses compile dengan opsi fallback -j1 jika terjadi error
         make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log
 
+    - name: Package Kernel (ZIP)
+      run: |
         if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
           ZIP_NAME="kernel build-${{ env.BUILD_TIME }}.zip"
           zip -j "$ZIP_NAME" out/arch/arm64/boot/Image.gz-dtb 2>/dev/null || zip -j "$ZIP_NAME" out/arch/arm64/boot/Image.gz-dtb
-          echo "FINAL_ZIP=$ZIP_NAME" >> $GITHUB_ENV
+        else
+          echo "Error: Image.gz-dtb tidak ditemukan. Build mungkin gagal."
+          exit 1
         fi
 
     - name: Upload Artifacts
