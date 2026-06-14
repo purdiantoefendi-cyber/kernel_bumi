@@ -23,10 +23,6 @@ jobs:
       - name: Setup KernelSU-Next
         run: |
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s v3.1.0-legacy-susfs
-          
-          # Patch manual untuk mengatasi mismatch API SusFS v2.0.0
-          echo "Menerapkan fix untuk supercalls.c..."
-          sed -i '/if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS)/,+2d' drivers/kernelsu/supercalls.c
 
       # Langkah 3: Install Dependensi
       - name: Install Dependencies
