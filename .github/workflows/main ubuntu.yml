@@ -34,6 +34,16 @@ jobs:
       - name: Download Clang Toolchain
         run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
 
+    # 4. Instalasi KernelSU & Patch SusFS Fix
+    - name: Setup KernelSU
+      run: |
+        curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s ${{ github.event.inputs.kernelsu_branch }}
+        
+        # Patch manual untuk mengatasi mismatch API SusFS v2.0.0
+        echo "Menerapkan fix untuk supercalls.c..."
+        sed -i '/if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS)/,+2d' drivers/kernelsu/supercalls.c
+
+
       # Langkah 5: Atur Environment Build & Path
       - name: Set Up Build Environment
         run: |
