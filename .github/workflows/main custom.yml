@@ -55,7 +55,7 @@ jobs:
     - name: Compile Kernel
       run: |
         # Proses compile dengan opsi fallback -j1 jika terjadi error
-        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
+          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
 
     - name: Package Kernel (ZIP)
       run: |
