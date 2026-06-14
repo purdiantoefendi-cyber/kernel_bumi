@@ -479,13 +479,13 @@ int zcv_filter_add(struct zcv_filter *zf)
                 else
                         avgc = 0;
 
-                if (dtime.tv_sec < time_thread) {
-                        bm_err("zcvf, no update time:%ld %d avgc:%d avgc_thread\n",
-                                (long)dtime.tv_sec, time_thread,
-                                avgc, avgc_thread);
-                        return 0;
-                }
-        }
+		if (dtime.tv_sec < time_thread) {
+			bm_err("zcvf, no update time:%ld %d avgc:%d avgc_thread:%d\n",
+				(long)dtime.tv_sec, time_thread,
+				avgc, avgc_thread);
+			return 0;
+		}
+	}
 
         ret = zcv_add(zf, car, &now);
         if (ret == -1) {
