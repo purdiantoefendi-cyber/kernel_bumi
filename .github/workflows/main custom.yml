@@ -50,12 +50,12 @@ jobs:
     - name: Generate Defconfig
       run: |
         # $ARGS didapat dari step "Set Timezone & Variables"
-        make O=out $ARGS ${{ github.event.inputs.defconfig }} 2>&1 | tee defconfig.log
+        make O=out $ARGS ${{ github.event.inputs.defconfig }} | tee defconfig.log
 
     - name: Compile Kernel
       run: |
         # Proses compile dengan opsi fallback -j1 jika terjadi error
-        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS 2>&1 | tee compile.log
+        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
 
     - name: Package Kernel (ZIP)
       run: |
