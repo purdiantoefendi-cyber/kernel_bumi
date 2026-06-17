@@ -37,7 +37,9 @@ jobs:
       with:
         ref: ${{ github.event.inputs.branch }}
         submodules: recursive
-        
+
+    - name: Set Variables
+      run: |
         # Menyimpan BUILD_TIME ke environment GitHub agar bisa dipakai di step ZIP dan Upload
         echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
         
@@ -64,7 +66,7 @@ jobs:
 
     - name: Generate Defconfig
       run: |
-        # $ARGS didapat dari step "Set Timezone & Variables"
+        # $ARGS didapat dari step "Set Variables"
         make O=out $ARGS ${{ github.event.inputs.defconfig }} | tee defconfig.log
 
     - name: Compile Kernel
@@ -95,4 +97,3 @@ jobs:
           out/arch/arm64/boot/dts/**/*.gz
           out/arch/arm64/boot/dts/**/*.gz-dtb
         retention-days: 7
-        
