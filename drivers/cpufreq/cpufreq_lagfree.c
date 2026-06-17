@@ -1,10 +1,10 @@
 /*
- *  drivers/cpufreq/cpufreq_lagfree.c
+ * drivers/cpufreq/cpufreq_lagfree.c
  *
- *  Copyright (C)  2001 Russell King
- *            (C)  2003 Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>.
- *                      Jun Nakajima <jun.nakajima@intel.com>
- *            (C)  2004 Alexander Clouter <alex-kernel@digriz.org.uk>
+ * Copyright (C)  2001 Russell King
+ * (C)  2003 Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>.
+ * Jun Nakajima <jun.nakajima@intel.com>
+ * (C)  2004 Alexander Clouter <alex-kernel@digriz.org.uk>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -29,12 +29,13 @@
 #include <linux/kernel_stat.h>
 #include <linux/percpu.h>
 #include <linux/mutex.h>
-#include <linux/earlysuspend.h>
+#include <linux/suspend.h> /* Diganti dari earlysuspend.h ke suspend.h untuk Kernel 4.19 */
 #include <linux/cpu.h>
 #include <linux/percpu-defs.h>
 #include <linux/slab.h>
 #include <linux/tick.h>
 #include <linux/sched/cpufreq.h>
+
 /*
  * dbs is used in this file as a shortform for demandbased switching
  * It helps to keep variable names smaller, simpler
@@ -93,7 +94,9 @@ static unsigned int dbs_enable;	/* number of CPUs using this policy */
  * is recursive for the same process. -Venki
  */
 static DEFINE_MUTEX (dbs_mutex);
-static DECLARE_DELAYED_WORK(dbs_work, do_dbs_timer);
+
+/* Di Kernel 4.19 API Timer berubah, kita gunakan DECLARE_DEFERRABLE_WORK */
+static DECLARE_DEFERRABLE_WORK(dbs_work, do_dbs_timer);
 
 struct dbs_tuners {
 	unsigned int sampling_rate;
@@ -271,29 +274,6 @@ static ssize_t store_ignore_nice_load(struct cpufreq_policy *policy,
 	return count;
 }
 
-/*static ssize_t store_freq_step(struct cpufreq_policy *policy,
-		const char *buf, size_t count)
-{
-	unsigned int input;
-	int ret;
-
-	ret = sscanf(buf, "%u", &input);
-
-	if (ret != 1)
-		return -EINVAL;
-
-	if (input > 100)
-		input = 100;
-
-	/ * no need to test here if freq_step is zero as the user might actually
-	 * want this, they would be crazy though :) * /
-	mutex_lock(&dbs_mutex);
-	dbs_tuners_ins.freq_step = input;
-	mutex_unlock(&dbs_mutex);
-
-	return count;
-}*/
-
 #define define_one_rw(_name) \
 static struct freq_attr _name = \
 __ATTR(_name, 0644, show_##_name, store_##_name)
@@ -303,7 +283,6 @@ define_one_rw(sampling_down_factor);
 define_one_rw(up_threshold);
 define_one_rw(down_threshold);
 define_one_rw(ignore_nice_load);
-//define_one_rw(freq_step);
 
 static struct attribute * dbs_attributes[] = {
 	&sampling_rate_max.attr,
@@ -313,7 +292,6 @@ static struct attribute * dbs_attributes[] = {
 	&up_threshold.attr,
 	&down_threshold.attr,
 	&ignore_nice_load.attr,
-	//&freq_step.attr,
 	NULL
 };
 
@@ -338,24 +316,8 @@ static void dbs_check_cpu(int cpu)
 
 	policy = this_dbs_info->cur_policy;
 
-	/*
-	 * The default safe range is 20% to 80%
-	 * Every sampling_rate, we check
-	 *	- If current idle time is less than 20%, then we try to
-	 *	  increase frequency
-	 * Every sampling_rate*sampling_down_factor, we check
-	 *	- If current idle time is more than 80%, then we try to
-	 *	  decrease frequency
-	 *
-	 * Any frequency increase takes it to the maximum frequency.
-	 * Frequency reduction happens at minimum steps of
-	 * 5% (default) of max_frequency
-	 */
-
-	/* Check for frequency increase */
 	idle_ticks = UINT_MAX;
 
-	/* Check for frequency increase */
 	tmp_idle_ticks = total_idle_ticks -
 		this_dbs_info->prev_cpu_idle_up;
 	this_dbs_info->prev_cpu_idle_up = total_idle_ticks;
@@ -363,7 +325,6 @@ static void dbs_check_cpu(int cpu)
 	if (tmp_idle_ticks < idle_ticks)
 		idle_ticks = tmp_idle_ticks;
 
-	/* Scale idle ticks by 100 and compare with up and down ticks */
 	idle_ticks *= 100;
 	up_idle_ticks = (100 - dbs_tuners_ins.up_threshold) *
 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
@@ -373,17 +334,14 @@ static void dbs_check_cpu(int cpu)
 		this_dbs_info->prev_cpu_idle_down =
 			this_dbs_info->prev_cpu_idle_up;
 
-		/* if we are already at full speed then break out early */
 		if (this_dbs_info->requested_freq == policy->max && !suspended)
 			return;
 
-		//freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
 		if (suspended)
 			freq_target = (FREQ_STEP_UP_SLEEP_PERCENT * policy->max) / 100;
 		else
 			freq_target = policy->max;
 
-		/* max freq cannot be less than 100. But who knows.... */
 		if (unlikely(freq_target == 0))
 			freq_target = 5;
 
@@ -391,11 +349,9 @@ static void dbs_check_cpu(int cpu)
 		if (this_dbs_info->requested_freq > policy->max)
 			this_dbs_info->requested_freq = policy->max;
 
-		//Screen off mode
 		if (suspended && this_dbs_info->requested_freq > FREQ_SLEEP_MAX)
 		    this_dbs_info->requested_freq = FREQ_SLEEP_MAX;
 
-		//Screen off mode
 		if (!suspended && this_dbs_info->requested_freq < FREQ_AWAKE_MIN)
 		    this_dbs_info->requested_freq = FREQ_AWAKE_MIN;
 
@@ -404,12 +360,10 @@ static void dbs_check_cpu(int cpu)
 		return;
 	}
 
-	/* Check for frequency decrease */
 	this_dbs_info->down_skip++;
 	if (this_dbs_info->down_skip < dbs_tuners_ins.sampling_down_factor)
 		return;
 
-	/* Check for frequency decrease */
 	total_idle_ticks = this_dbs_info->prev_cpu_idle_up;
 	tmp_idle_ticks = total_idle_ticks -
 		this_dbs_info->prev_cpu_idle_down;
@@ -418,7 +372,6 @@ static void dbs_check_cpu(int cpu)
 	if (tmp_idle_ticks < idle_ticks)
 		idle_ticks = tmp_idle_ticks;
 
-	/* Scale idle ticks by 100 and compare with up and down ticks */
 	idle_ticks *= 100;
 	this_dbs_info->down_skip = 0;
 
@@ -428,23 +381,14 @@ static void dbs_check_cpu(int cpu)
 		usecs_to_jiffies(freq_down_sampling_rate);
 
 	if (idle_ticks > down_idle_ticks) {
-		/*
-		 * if we are already at the lowest speed then break out early
-		 * or if we 'cannot' reduce the speed as the user might want
-		 * freq_target to be zero
-		 */
-		if (this_dbs_info->requested_freq == policy->min && suspended
-				/*|| dbs_tuners_ins.freq_step == 0*/)
+		if (this_dbs_info->requested_freq == policy->min && suspended)
 			return;
 
-		//freq_target = (dbs_tuners_ins.freq_step * policy->max) / 100;
-		freq_target = FREQ_STEP_DOWN; //policy->max;
+		freq_target = FREQ_STEP_DOWN;
 
-		/* max freq cannot be less than 100. But who knows.... */
 		if (unlikely(freq_target == 0))
 			freq_target = 5;
 
-		// prevent going under 0
 		if(freq_target > this_dbs_info->requested_freq)
 			this_dbs_info->requested_freq = policy->min;
 		else
@@ -453,11 +397,9 @@ static void dbs_check_cpu(int cpu)
 		if (this_dbs_info->requested_freq < policy->min)
 			this_dbs_info->requested_freq = policy->min;
 
-		//Screen on mode
 		if (!suspended && this_dbs_info->requested_freq < FREQ_AWAKE_MIN)
 		    this_dbs_info->requested_freq = FREQ_AWAKE_MIN;
 
-		//Screen off mode
 		if (suspended && this_dbs_info->requested_freq > FREQ_SLEEP_MAX)
 		    this_dbs_info->requested_freq = FREQ_SLEEP_MAX;
 
@@ -480,7 +422,7 @@ static void do_dbs_timer(struct work_struct *work)
 
 static inline void dbs_timer_init(void)
 {
-	init_timer_deferrable(&dbs_work.timer);
+	/* Penyesuaian API untuk Linux 4.15+ (Menghilangkan init_timer_deferrable) */
 	schedule_delayed_work(&dbs_work,
 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
 	return;
@@ -495,7 +437,6 @@ static inline void dbs_timer_exit(void)
 static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 				   unsigned int event)
 {
-
 	return 0;
 }
 
@@ -507,28 +448,35 @@ struct cpufreq_governor cpufreq_gov_lagfree = {
 	.owner			= THIS_MODULE,
 };
 
-static void lagfree_early_suspend(struct early_suspend *handler) {
-	suspended = 1;
+/* --- MENGGUNAKAN PM NOTIFIER UNTUK KERNEL 4.19 --- */
+static int lagfree_pm_notify(struct notifier_block *nb, unsigned long action, void *ptr)
+{
+	switch (action) {
+	case PM_SUSPEND_PREPARE:
+		suspended = 1;
+		break;
+	case PM_POST_SUSPEND:
+		suspended = 0;
+		break;
+	}
+	return NOTIFY_OK;
 }
 
-static void lagfree_late_resume(struct early_suspend *handler) {
-	suspended = 0;
-}
-
-
+static struct notifier_block lagfree_pm_notifier = {
+	.notifier_call = lagfree_pm_notify,
+};
+/* ------------------------------------------------- */
 
 static int __init cpufreq_gov_dbs_init(void)
 {
-	register_early_suspend(&lagfree_power_suspend);
+	register_pm_notifier(&lagfree_pm_notifier);
 	return cpufreq_register_governor(&cpufreq_gov_lagfree);
 }
 
 static void __exit cpufreq_gov_dbs_exit(void)
 {
-	/* Make sure that the scheduled work is indeed not running */
 	flush_scheduled_work();
-
-	unregister_early_suspend(&lagfree_power_suspend);
+	unregister_pm_notifier(&lagfree_pm_notifier);
 	cpufreq_unregister_governor(&cpufreq_gov_lagfree);
 }
 
@@ -546,4 +494,3 @@ fs_initcall(cpufreq_gov_dbs_init);
 module_init(cpufreq_gov_dbs_init);
 #endif
 module_exit(cpufreq_gov_dbs_exit); 
-
