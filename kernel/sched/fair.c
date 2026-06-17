@@ -173,19 +173,21 @@ static void update_burst_score(struct sched_entity *se) {
 	struct task_struct *p;
 	u8 prio;
 	u8 prev_prio;
+	u8 new_prio;
 
 	/* 2. Lakukan pengecekan (eksekusi logika pertama) */
 	if (!entity_is_task(se)) 
 		return;
 
-	/* 3. Baru masukkan nilainya ke dalam variabel */
+	/* 3. Masukkan nilai ke dalam variabel */
 	p = task_of(se);
 	prio = p->static_prio - MAX_RT_PRIO;
 	prev_prio = min(39, prio + se->burst_score);
 
+	/* 4. Eksekusi logika lanjutan */
 	se->burst_score = se->burst_penalty >> 2;
 
-	u8 new_prio = min(39, prio + se->burst_score);
+	new_prio = min(39, prio + se->burst_score);
 	if (new_prio != prev_prio)
 		reweight_task(p, new_prio);
 }
@@ -197,10 +199,10 @@ static void update_burst_penalty(struct sched_entity *se) {
 }
 
 static inline u32 binary_smooth(u32 new, u32 old) {
-  int increment = new - old;
-  return (0 <= increment)?
-    old + ( increment >> (int)sched_burst_smoothness_long):
-    old - (-increment >> (int)sched_burst_smoothness_short);
+	int increment = new - old;
+	return (0 <= increment)?
+		old + ( increment >> (int)sched_burst_smoothness_long):
+		old - (-increment >> (int)sched_burst_smoothness_short);
 }
 
 static void restart_burst(struct sched_entity *se) {
@@ -221,6 +223,7 @@ int __weak arch_asym_cpu_priority(int cpu)
 	return -cpu;
 }
 #endif
+
 
 #ifdef CONFIG_CFS_BANDWIDTH
 /*
@@ -6763,7 +6766,6 @@ int find_best_idle_cpu(struct task_struct *p, bool prefer_idle)
 	int min_cap = capacity_orig_of(0);
 	int prefer_big = prefer_idle && (task_util(p) > min_cap);
 
-/* --- TAMBAHKAN #if 0 MULAI DARI SINI --- */
 #if 0
 	struct perf_order_domain *domain;
 	struct list_head *pos;
@@ -6800,6 +6802,7 @@ int find_best_idle_cpu(struct task_struct *p, bool prefer_idle)
 	}
 
 find_idle_cpu:
+#endif /* <-- INI PENUTUP #if 0 YANG SEBELUMNYA HILANG */
 
 	return best_idle_cpu;
 }
@@ -6845,12 +6848,10 @@ int select_max_spare_capacity(struct task_struct *p, int target)
 	int cpu = task_cpu(p);
 	struct cpumask *tsk_cpus_allow = &p->cpus_allowed;
 
-/* --- BUNGKUS DENGAN #if 0 --- */
 #if 0
 	if (!pod_is_ready())
 		return target;
 #endif
-/* ---------------------------- */
 
 	/* If the prevous cpu is cache affine and idle, choose it first. */
 	if (cpu != target &&
