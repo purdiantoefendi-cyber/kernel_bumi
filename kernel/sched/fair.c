@@ -169,10 +169,19 @@ static inline u64 scale_slice(u64 delta, struct sched_entity *se) {
 static inline struct task_struct *task_of(struct sched_entity *se);
 
 static void update_burst_score(struct sched_entity *se) {
-	if (!entity_is_task(se)) return;
-	struct task_struct *p = task_of(se);
-	u8 prio = p->static_prio - MAX_RT_PRIO;
-	u8 prev_prio = min(39, prio + se->burst_score);
+	/* 1. Deklarasikan semua variabel di paling atas */
+	struct task_struct *p;
+	u8 prio;
+	u8 prev_prio;
+
+	/* 2. Lakukan pengecekan (eksekusi logika pertama) */
+	if (!entity_is_task(se)) 
+		return;
+
+	/* 3. Baru masukkan nilainya ke dalam variabel */
+	p = task_of(se);
+	prio = p->static_prio - MAX_RT_PRIO;
+	prev_prio = min(39, prio + se->burst_score);
 
 	se->burst_score = se->burst_penalty >> 2;
 
@@ -6753,6 +6762,9 @@ int find_best_idle_cpu(struct task_struct *p, bool prefer_idle)
 	struct cpumask *tsk_cpus_allow = &p->cpus_allowed;
 	int min_cap = capacity_orig_of(0);
 	int prefer_big = prefer_idle && (task_util(p) > min_cap);
+
+/* --- TAMBAHKAN #if 0 MULAI DARI SINI --- */
+#if 0
 	struct perf_order_domain *domain;
 	struct list_head *pos;
 
@@ -6833,8 +6845,13 @@ int select_max_spare_capacity(struct task_struct *p, int target)
 	int cpu = task_cpu(p);
 	struct cpumask *tsk_cpus_allow = &p->cpus_allowed;
 
+/* --- BUNGKUS DENGAN #if 0 --- */
+#if 0
 	if (!pod_is_ready())
 		return target;
+#endif
+/* ---------------------------- */
+
 	/* If the prevous cpu is cache affine and idle, choose it first. */
 	if (cpu != target &&
 		cpus_share_cache(cpu, target) &&
