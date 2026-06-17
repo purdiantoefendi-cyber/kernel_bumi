@@ -37,11 +37,6 @@ jobs:
       with:
         ref: ${{ github.event.inputs.branch }}
         submodules: recursive
-
-    - name: Set Timezone & Variables
-      run: |
-        # Mengatur zona waktu ke Asia/Jakarta
-        sudo timedatectl set-timezone Asia/Jakarta
         
         # Menyimpan BUILD_TIME ke environment GitHub agar bisa dipakai di step ZIP dan Upload
         echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
