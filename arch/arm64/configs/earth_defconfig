@@ -34,7 +34,6 @@ CONFIG_SCHED_MC=y
 CONFIG_NR_CPUS=8
 CONFIG_RANDOMIZE_BASE=y
 # C3T code for HQ-219114 by liunianliang at 22/08/11 start
-CONFIG_CMDLINE="ramoops_memreserve=4M elevator=performance"
 CONFIG_CMDLINE_EXTEND=y
 # C3T code for HQ-219114 by liunianliang at 22/08/11 end
 # CONFIG_EFI is not set
@@ -523,6 +522,8 @@ CONFIG_KSU_SUSFS_TRY_UMOUNT=n
 CONFIG_IOSCHED_ZEN=y
 CONFIG_IOSCHED_GAMER=y
 CONFIG_IOSCHED_PERFORMANCE=y
-CONFIG_DEFAULT_IOSCHED="performance"
+#CONFIG_CMDLINE="ramoops_memreserve=4M elevator=performance"
+CONFIG_CMDLINE="ramoops_memreserve=4M"
+#CONFIG_DEFAULT_IOSCHED="performance"
 #CONFIG_CLEANCACHE=y
 #CONFIG_EXTREME_LOW_RAM=y
