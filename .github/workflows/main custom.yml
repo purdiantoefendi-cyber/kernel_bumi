@@ -3,14 +3,34 @@ name: Build Kernel Custom
 on:
   workflow_dispatch:
     inputs:
-      branch: { description: 'Branch', required: true }
-      defconfig: { description: 'Defconfig', required: true, default: 'earth_defconfig' }
-      kernelsu_url: { description: 'Custom KSU URL', required: false, default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh' }
-      kernelsu_branch: { description: 'KSU Branch', required: false, default: 'v3.1.0-legacy-susfs' }
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-slim
+          - self-hosted
+      branch:
+        description: 'Branch'
+        required: true
+      defconfig:
+        description: 'Defconfig'
+        required: true
+        default: 'earth_defconfig'
+      kernelsu_url:
+        description: 'Custom KSU URL'
+        required: false
+        default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh'
+      kernelsu_branch:
+        description: 'KSU Branch'
+        required: false
+        default: 'v3.1.0-legacy-susfs'
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner }}
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -55,7 +75,7 @@ jobs:
     - name: Compile Kernel
       run: |
         # Proses compile dengan opsi fallback -j1 jika terjadi error
-          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
+        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
 
     - name: Package Kernel (ZIP)
       run: |
@@ -80,3 +100,4 @@ jobs:
           out/arch/arm64/boot/dts/**/*.gz
           out/arch/arm64/boot/dts/**/*.gz-dtb
         retention-days: 7
+        
