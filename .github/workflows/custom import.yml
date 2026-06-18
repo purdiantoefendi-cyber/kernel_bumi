@@ -3,6 +3,15 @@ name: Custom Repo Importer
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-slim
+          - self-hosted
       target_repo_url:
         description: 'URL Repository yang mau di-import (contoh: https://github.com/Abreuzzs/AbrezzPjkt_Earth.git)'
         required: true
@@ -18,7 +27,7 @@ on:
 
 jobs:
   import-job:
-    runs-on: ubuntu-slim # Sudah diubah menjadi server Ubuntu bawaan GitHub
+    runs-on: ${{ github.event.inputs.runner }}
     permissions:
       contents: write # Izin wajib untuk push branch baru
 
