@@ -1746,12 +1746,9 @@ static int find_lowest_rq(struct task_struct *task)
 	int cpu      = task_cpu(task);
 	int ret;
 #ifdef CONFIG_MTK_SCHED_INTEROP
-/* --- MATIKAN DEKLARASI VARIABEL POD --- */
-#if 0
 	struct perf_order_domain *domain;
 	struct perf_order_domain *tmp_domain[5] = {0, 0, 0, 0, 0};
 	int i, iter_cpu, domain_cnt = 0;
-#endif
 #endif
 
 	/* Make sure the mask is initialized first */
@@ -1788,8 +1785,6 @@ static int find_lowest_rq(struct task_struct *task)
 		!cpu_isolated(cpu))
 		return cpu;
 
-/* --- MATIKAN EKSEKUSI FUNGSI POD --- */
-#if 0
 	if (pod_is_ready()) {
 		for_each_perf_domain_ascending(domain) {
 			tmp_domain[domain_cnt] = domain;
@@ -1804,8 +1799,6 @@ static int find_lowest_rq(struct task_struct *task)
 		}
 	}
 #endif
-#endif
-
 
 	/*
 	 * At this point we have built a mask of CPUs representing the

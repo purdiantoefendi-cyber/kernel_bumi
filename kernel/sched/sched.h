@@ -2555,24 +2555,6 @@ static inline unsigned long schedutil_cpu_util(int cpu, unsigned long util_cfs,
 {
 	return 0;
 }
-
-/* --- TAMBAHKAN BLOK INI --- */
-static inline unsigned long cpu_bw_dl(struct rq *rq)
-{
-	return 0;
-}
-
-static inline unsigned long cpu_util_dl(struct rq *rq)
-{
-	return 0;
-}
-
-static inline unsigned long cpu_util_rt(struct rq *rq)
-{
-	return 0;
-}
-/* -------------------------- */
-
 #endif /* CONFIG_CPU_FREQ_GOV_SCHEDUTIL */
 
 #ifdef CONFIG_HAVE_SCHED_AVG_IRQ
