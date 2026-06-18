@@ -3,6 +3,15 @@ name: Force Push Commits (Custom Repo & Branch)
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-slim
+          - self-hosted
       external_repo:
         description: 'URL Repository Eksternal'
         required: true
