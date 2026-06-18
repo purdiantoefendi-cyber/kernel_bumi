@@ -35,7 +35,7 @@ on:
 
 jobs:
   force-apply-commits:
-    runs-on: ubuntu-slim
+    runs-on: ${{ github.event.inputs.runner }}
     permissions:
       contents: write
 
