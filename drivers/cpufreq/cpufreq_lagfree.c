@@ -5,10 +5,7 @@
  * (C)  2003 Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>.
  * Jun Nakajima <jun.nakajima@intel.com>
  * (C)  2004 Alexander Clouter <alex-kernel@digriz.org.uk>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * Fixed & Ported for Kernel 4.19+ EAS by Gemini
  */
 
 #include <linux/kernel.h>
@@ -58,8 +55,8 @@ static void do_dbs_timer(struct work_struct *work);
 
 struct cpu_dbs_info_s {
         struct cpufreq_policy *cur_policy;
-        unsigned int prev_cpu_idle_up;
-        unsigned int prev_cpu_idle_down;
+        u64 prev_cpu_idle; /* Perbaikan: Menggunakan u64 untuk tick presisi */
+        u64 prev_cpu_wall;
         unsigned int enable;
         unsigned int down_skip;
         unsigned int requested_freq;
@@ -70,7 +67,7 @@ static unsigned int dbs_enable;
 static DEFINE_MUTEX (dbs_mutex);
 static DECLARE_DEFERRABLE_WORK(dbs_work, do_dbs_timer);
 
-/* EAS HOOK DUMMY */
+/* EAS HOOK DUMMY (Agar MediaTek tidak panik) */
 struct lagfree_eas_hook {
         struct update_util_data util_data;
 };
@@ -203,7 +200,7 @@ static ssize_t store_down_threshold(struct cpufreq_policy *unused, const char *b
 
 static ssize_t store_ignore_nice_load(struct cpufreq_policy *policy, const char *buf, size_t count)
 {
-        unsigned int input, j;
+        unsigned int input;
         int ret = sscanf(buf, "%u", &input);
 
         if (ret != 1) return -EINVAL;
@@ -215,11 +212,6 @@ static ssize_t store_ignore_nice_load(struct cpufreq_policy *policy, const char 
                 return count;
         }
         dbs_tuners_ins.ignore_nice = input;
-
-        for_each_online_cpu(j) {
-                struct cpu_dbs_info_s *j_dbs_info = &per_cpu(cpu_dbs_info, j);
-                j_dbs_info->prev_cpu_idle_down = j_dbs_info->prev_cpu_idle_up;
-        }
         mutex_unlock(&dbs_mutex);
         return count;
 }
@@ -252,45 +244,45 @@ static struct attribute_group dbs_attr_group = {
 
 /************************** sysfs end ************************/
 
+/* PERBAIKAN TOTAL: Otak kalkulasi beban ditulis ulang menggunakan standar Linux */
 static void dbs_check_cpu(int cpu)
 {
-        unsigned int idle_ticks, up_idle_ticks, down_idle_ticks;
-        unsigned int tmp_idle_ticks, total_idle_ticks;
-        unsigned int freq_target;
-        unsigned int freq_down_sampling_rate;
         struct cpu_dbs_info_s *this_dbs_info = &per_cpu(cpu_dbs_info, cpu);
         struct cpufreq_policy *policy;
+        u64 cur_wall_time, cur_idle_time;
+        unsigned int idle_time, wall_time, load, freq_target;
 
         if (!this_dbs_info->enable)
                 return;
 
         policy = this_dbs_info->cur_policy;
-        idle_ticks = UINT_MAX;
+        if (!policy)
+                return;
 
-        tmp_idle_ticks = total_idle_ticks - this_dbs_info->prev_cpu_idle_up;
-        this_dbs_info->prev_cpu_idle_up = total_idle_ticks;
+        /* Membaca beban CPU secara presisi tanpa variabel hantu */
+        cur_idle_time = get_cpu_idle_time_us(cpu, &cur_wall_time);
+        
+        wall_time = (unsigned int)(cur_wall_time - this_dbs_info->prev_cpu_wall);
+        idle_time = (unsigned int)(cur_idle_time - this_dbs_info->prev_cpu_idle);
 
-        if (tmp_idle_ticks < idle_ticks)
-                idle_ticks = tmp_idle_ticks;
+        this_dbs_info->prev_cpu_wall = cur_wall_time;
+        this_dbs_info->prev_cpu_idle = cur_idle_time;
 
-        idle_ticks *= 100;
-        up_idle_ticks = (100 - dbs_tuners_ins.up_threshold) *
-                        usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
+        if (unlikely(!wall_time || wall_time < idle_time))
+                load = 0;
+        else
+                load = 100 * (wall_time - idle_time) / wall_time;
 
-        if (idle_ticks < up_idle_ticks) {
+        /* Mengeksekusi penambahan frekuensi (Ramp Up) */
+        if (load > dbs_tuners_ins.up_threshold) {
                 this_dbs_info->down_skip = 0;
-                this_dbs_info->prev_cpu_idle_down = this_dbs_info->prev_cpu_idle_up;
 
                 if (this_dbs_info->requested_freq == policy->max && !suspended)
                         return;
 
-                if (suspended)
-                        freq_target = (FREQ_STEP_UP_SLEEP_PERCENT * policy->max) / 100;
-                else
-                        freq_target = policy->max;
+                freq_target = suspended ? ((FREQ_STEP_UP_SLEEP_PERCENT * policy->max) / 100) : policy->max;
 
-                if (unlikely(freq_target == 0))
-                        freq_target = 5;
+                if (unlikely(freq_target == 0)) freq_target = 5;
 
                 this_dbs_info->requested_freq += freq_target;
                 if (this_dbs_info->requested_freq > policy->max)
@@ -302,29 +294,18 @@ static void dbs_check_cpu(int cpu)
                 if (!suspended && this_dbs_info->requested_freq < FREQ_AWAKE_MIN)
                     this_dbs_info->requested_freq = FREQ_AWAKE_MIN;
 
-                /* PERBAIKAN: Menggunakan fungsi cpufreq standar untuk menghindari Kernel Panic Lock */
                 cpufreq_driver_target(policy, this_dbs_info->requested_freq, CPUFREQ_RELATION_H);
                 return;
         }
 
+        /* Mengeksekusi penurunan frekuensi (Ramp Down) */
         this_dbs_info->down_skip++;
         if (this_dbs_info->down_skip < dbs_tuners_ins.sampling_down_factor)
                 return;
 
-        total_idle_ticks = this_dbs_info->prev_cpu_idle_up;
-        tmp_idle_ticks = total_idle_ticks - this_dbs_info->prev_cpu_idle_down;
-        this_dbs_info->prev_cpu_idle_down = total_idle_ticks;
-
-        if (tmp_idle_ticks < idle_ticks)
-                idle_ticks = tmp_idle_ticks;
-
-        idle_ticks *= 100;
         this_dbs_info->down_skip = 0;
 
-        freq_down_sampling_rate = dbs_tuners_ins.sampling_rate * dbs_tuners_ins.sampling_down_factor;
-        down_idle_ticks = (100 - dbs_tuners_ins.down_threshold) * usecs_to_jiffies(freq_down_sampling_rate);
-
-        if (idle_ticks > down_idle_ticks) {
+        if (load < dbs_tuners_ins.down_threshold) {
                 if (this_dbs_info->requested_freq == policy->min && suspended)
                         return;
 
@@ -332,7 +313,7 @@ static void dbs_check_cpu(int cpu)
 
                 if (unlikely(freq_target == 0)) freq_target = 5;
 
-                if(freq_target > this_dbs_info->requested_freq)
+                if (freq_target > this_dbs_info->requested_freq)
                         this_dbs_info->requested_freq = policy->min;
                 else
                         this_dbs_info->requested_freq -= freq_target;
@@ -346,7 +327,6 @@ static void dbs_check_cpu(int cpu)
                 if (suspended && this_dbs_info->requested_freq > FREQ_SLEEP_MAX)
                     this_dbs_info->requested_freq = FREQ_SLEEP_MAX;
 
-                /* PERBAIKAN: Menggunakan fungsi cpufreq standar */
                 cpufreq_driver_target(policy, this_dbs_info->requested_freq, CPUFREQ_RELATION_H);
                 return;
         }
@@ -355,19 +335,26 @@ static void dbs_check_cpu(int cpu)
 static void do_dbs_timer(struct work_struct *work)
 {
         int i;
+        
+        /* PERBAIKAN DEADLOCK: Buka kuncian sebelum loop agar tidak tabrakan dengan cpufreq_driver_target */
         mutex_lock(&dbs_mutex);
+        if (!dbs_enable) {
+                mutex_unlock(&dbs_mutex);
+                return;
+        }
+        mutex_unlock(&dbs_mutex); 
+
         for_each_online_cpu(i)
                 dbs_check_cpu(i);
-                
-        /* PERBAIKAN: Mencegah timer me-restart dirinya sendiri saat sudah dimatikan */
+
+        mutex_lock(&dbs_mutex);
         if (dbs_enable > 0)
                 schedule_delayed_work(&dbs_work, usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
-                
         mutex_unlock(&dbs_mutex);
 }
 
 /* =========================================================
- * FUNGSI PENGGERAK UNTUK KERNEL 4.19
+ * FUNGSI PENGGERAK KERNEL
  * ========================================================= */
 static int lagfree_init(struct cpufreq_policy *policy)
 {
@@ -397,10 +384,11 @@ static int lagfree_start(struct cpufreq_policy *policy)
                 this_dbs_info = &per_cpu(cpu_dbs_info, j);
                 
                 this_dbs_info->enable = 1;
-                this_dbs_info->prev_cpu_idle_up = 0;
-                this_dbs_info->prev_cpu_idle_down = 0;
                 this_dbs_info->down_skip = 0;
                 this_dbs_info->requested_freq = policy->cur;
+                
+                /* Menginisialisasi waktu mulai agar tidak crash saat pembacaan pertama */
+                this_dbs_info->prev_cpu_idle = get_cpu_idle_time_us(j, &this_dbs_info->prev_cpu_wall);
 
                 cpufreq_add_update_util_hook(j, &hook->util_data, lagfree_update_util);
         }
@@ -427,7 +415,6 @@ static void lagfree_stop(struct cpufreq_policy *policy)
                 cpufreq_remove_update_util_hook(j);
         }
 
-        /* PERBAIKAN DEADLOCK: Unlock mutex terlebih dahulu sebelum menunggu timer selesai! */
         mutex_lock(&dbs_mutex);
         dbs_enable--;
         mutex_unlock(&dbs_mutex);
