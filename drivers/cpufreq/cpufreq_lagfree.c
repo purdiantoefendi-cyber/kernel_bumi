@@ -1,9 +1,9 @@
 /*
  * drivers/cpufreq/cpufreq_lagfree.c
  *
- * Modern Event-Driven (EAS-Aware) Lagfree Governor for Kernel 4.19+
- * Converted to utilize update_util_hook and Fast Switch architecture
- * by Gemini.
+ * Ultra-Safe VIP KThread Lagfree Governor for Kernel 4.19+ (Android 12-16)
+ * Combines Deferred Safety with Schedutil's Exclusive KThread Architecture.
+ * Built by Gemini.
  */
 
 #include <linux/kernel.h>
@@ -15,24 +15,33 @@
 #include <linux/percpu-defs.h>
 #include <linux/slab.h>
 #include <linux/sched/cpufreq.h>
-#include <linux/irq_work.h>
-#include <linux/workqueue.h>
+#include <linux/kthread.h>
 #include <linux/jiffies.h>
 #include <linux/kernel_stat.h>
 #include <linux/tick.h>
 #include <linux/suspend.h>
+#include <linux/mutex.h>
 
 #define FREQ_STEP_DOWN                          (160000)
 #define FREQ_SLEEP_MAX                          (320000)
 #define FREQ_AWAKE_MIN                          (480000)
 #define FREQ_STEP_UP_SLEEP_PERCENT              (20)
 
-/* Rate Limit standar untuk EAS (20ms) agar PMIC aman dari spam */
-#define DEFAULT_RATE_LIMIT_US                   (20000) 
-
 unsigned int suspended = 0;
 
-/* Struktur Kebijakan Per-Cluster */
+/* ULTRA-SAFE TUNERS */
+struct dbs_tuners {
+        unsigned int rate_limit_us;
+        unsigned int up_threshold;
+        unsigned int down_threshold;
+};
+
+static struct dbs_tuners tuners = {
+        .rate_limit_us = 50000, /* 50ms Ultra-Safe Rate Limit mencegah PMIC Overload */
+        .up_threshold = 50,
+        .down_threshold = 15,
+};
+
 struct lagfree_policy {
         struct cpufreq_policy *policy;
         u64 last_update;
@@ -40,13 +49,13 @@ struct lagfree_policy {
         u64 prev_wall;
         unsigned int requested_freq;
         
-        struct irq_work irq_work;
-        struct work_struct work;
+        /* VIP KThread (Jalur Eksklusif Anti-Watchdog) */
+        struct kthread_worker *worker;
+        struct kthread_work work;
         struct mutex work_lock;
-        bool fast_switch_enabled;
+        bool work_in_progress;
 };
 
-/* Struktur Hook EAS Per-Core */
 struct lagfree_cpu {
         struct update_util_data update_util;
         struct lagfree_policy *lf_policy;
@@ -56,24 +65,10 @@ struct lagfree_cpu {
 static DEFINE_PER_CPU(struct lagfree_cpu, lagfree_cpus);
 static struct lagfree_policy *lf_policies[NR_CPUS];
 
-/* Konfigurasi Global */
-struct dbs_tuners {
-        unsigned int rate_limit_us;
-        unsigned int up_threshold;
-        unsigned int down_threshold;
-};
-
-static struct dbs_tuners tuners = {
-        .rate_limit_us = DEFAULT_RATE_LIMIT_US,
-        .up_threshold = 50,
-        .down_threshold = 15,
-};
-
-/************************** sysfs interface ************************/
+/************************** SYSFS INTERFACE ************************/
 #define show_one(file_name, object)                                        \
-static ssize_t show_##file_name                                                \
-(struct cpufreq_policy *unused, char *buf)                                \
-{                                                                        \
+static ssize_t show_##file_name(struct cpufreq_policy *unused, char *buf)  \
+{                                                                          \
         return sprintf(buf, "%u\n", tuners.object);                        \
 }
 show_one(rate_limit_us, rate_limit_us);
@@ -123,126 +118,94 @@ static struct attribute_group dbs_attr_group = {
         .name = "Shas_Dream",
 };
 
-/************************** CORE LOGIC (EVENT-DRIVEN) ************************/
+/************************** CORE LOGIC (VIP KTHREAD) ************************/
 
-static void lagfree_eval_cpu(struct lagfree_policy *lf_policy)
+/* Fungsi ini berjalan di jalur khususnya sendiri. Jauh dari gangguan Android saat Booting */
+static void lagfree_work_func(struct kthread_work *work)
 {
+        struct lagfree_policy *lf_policy = container_of(work, struct lagfree_policy, work);
         struct cpufreq_policy *policy = lf_policy->policy;
         u64 cur_wall_time, cur_idle_time;
         unsigned int idle_time, wall_time, load, freq_target;
-        int cpu = policy->cpu; 
 
-        cur_idle_time = get_cpu_idle_time_us(cpu, &cur_wall_time);
+        /* PENGAMAN MUTLAK: Mencegah tabrakan pembacaan memori */
+        mutex_lock(&lf_policy->work_lock);
+
+        cur_idle_time = get_cpu_idle_time_us(policy->cpu, &cur_wall_time);
         wall_time = (unsigned int)(cur_wall_time - lf_policy->prev_wall);
         idle_time = (unsigned int)(cur_idle_time - lf_policy->prev_idle);
 
         lf_policy->prev_wall = cur_wall_time;
         lf_policy->prev_idle = cur_idle_time;
 
-        if (unlikely(!wall_time || wall_time < idle_time))
-                load = 0;
-        else
-                load = 100 * (wall_time - idle_time) / wall_time;
+        if (unlikely(!wall_time || wall_time < idle_time)) load = 0;
+        else load = 100 * (wall_time - idle_time) / wall_time;
 
-        /* LOGIKA SUPER AGRESIF LAGFREE */
-        if (load > tuners.up_threshold) {
+        /* Otak Agresif Lagfree */
+        if (load > tuners.up_threshold) { 
                 freq_target = suspended ? ((FREQ_STEP_UP_SLEEP_PERCENT * policy->max) / 100) : policy->max;
-        } else if (load < tuners.down_threshold) {
+        } else if (load < tuners.down_threshold) { 
                 if (lf_policy->requested_freq > policy->min + FREQ_STEP_DOWN)
                         freq_target = lf_policy->requested_freq - FREQ_STEP_DOWN;
-                else
-                        freq_target = policy->min;
+                else freq_target = policy->min;
         } else {
-                return; /* Beban stabil, jangan lakukan apa-apa */
+                goto out; /* Beban stabil, tidak perlu ganti frekuensi */
         }
 
+        /* Filter Keamanan Hardware */
         if (unlikely(freq_target == 0)) freq_target = policy->min;
-        
-        if (suspended && freq_target > FREQ_SLEEP_MAX)
-                freq_target = FREQ_SLEEP_MAX;
-        if (!suspended && freq_target < FREQ_AWAKE_MIN)
-                freq_target = FREQ_AWAKE_MIN;
-
+        if (suspended && freq_target > FREQ_SLEEP_MAX) freq_target = FREQ_SLEEP_MAX;
+        if (!suspended && freq_target < FREQ_AWAKE_MIN) freq_target = FREQ_AWAKE_MIN;
         if (freq_target < policy->min) freq_target = policy->min;
         if (freq_target > policy->max) freq_target = policy->max;
 
-        if (lf_policy->requested_freq == freq_target)
-                return;
-
-        lf_policy->requested_freq = freq_target;
-
-        /* EKSEKUSI: Mode Fast Switch (Tanpa Delay) ATAU Mode Normal (Aman) */
-        if (lf_policy->fast_switch_enabled) {
-                cpufreq_driver_fast_switch(policy, freq_target);
-        } else {
+        if (lf_policy->requested_freq != freq_target) {
+                lf_policy->requested_freq = freq_target;
                 cpufreq_driver_target(policy, freq_target, CPUFREQ_RELATION_H);
         }
-}
 
-/* Worker untuk CPU yang tidak punya Fast Switch (agar aman dari Kernel Panic) */
-static void lagfree_work_func(struct work_struct *work)
-{
-        struct lagfree_policy *lf_policy = container_of(work, struct lagfree_policy, work);
-        mutex_lock(&lf_policy->work_lock);
-        lagfree_eval_cpu(lf_policy);
+out:
+        lf_policy->work_in_progress = false;
         mutex_unlock(&lf_policy->work_lock);
 }
 
-static void lagfree_irq_work(struct irq_work *irq_work)
-{
-        struct lagfree_policy *lf_policy = container_of(irq_work, struct lagfree_policy, irq_work);
-        schedule_work(&lf_policy->work);
-}
-
-/* * OTAK UTAMA: Dipanggil langsung oleh Scheduler EAS (Ribuan kali per detik) 
- * Tidak pakai timer, tidak ada delay, 100% responsif!
- */
+/* Sinyal Hook EAS: Sangat ringan, hanya men-trigger KThread lalu langsung pergi */
 static void lagfree_update_util(struct update_util_data *data, u64 time, unsigned int flags)
 {
         struct lagfree_cpu *lf_cpu = container_of(data, struct lagfree_cpu, update_util);
         struct lagfree_policy *lf_policy = lf_cpu->lf_policy;
-        u64 delta_ns;
 
-        if (!lf_policy) return;
+        if (!lf_policy || lf_policy->work_in_progress) return;
 
-        delta_ns = time - lf_policy->last_update;
-
-        /* Rate Limiter: Jangan mengeksekusi terlalu cepat agar PMIC IC MediaTek tidak meledak */
-        if (delta_ns < ((u64)tuners.rate_limit_us * NSEC_PER_USEC))
+        /* PENGAMAN OVERLOAD: Rate Limiter 50ms */
+        if (time - lf_policy->last_update < ((u64)tuners.rate_limit_us * NSEC_PER_USEC))
                 return;
 
         lf_policy->last_update = time;
-
-        if (lf_policy->fast_switch_enabled) {
-                lagfree_eval_cpu(lf_policy); /* Eksekusi instan di tingkat memori */
-        } else {
-                irq_work_queue(&lf_policy->irq_work); /* Defer dengan aman */
-        }
+        lf_policy->work_in_progress = true;
+        
+        /* Eksekusi dilempar ke KThread VIP */
+        kthread_queue_work(lf_policy->worker, &lf_policy->work);
 }
 
 /************************** GOVERNOR API ************************/
 
 static int lagfree_init(struct cpufreq_policy *policy)
 {
-        struct lagfree_policy *lf_policy;
-
-        lf_policy = kzalloc(sizeof(*lf_policy), GFP_KERNEL);
+        struct lagfree_policy *lf_policy = kzalloc(sizeof(*lf_policy), GFP_KERNEL);
         if (!lf_policy) return -ENOMEM;
 
         lf_policy->policy = policy;
         mutex_init(&lf_policy->work_lock);
-        init_irq_work(&lf_policy->irq_work, lagfree_irq_work);
-        INIT_WORK(&lf_policy->work, lagfree_work_func);
-
+        kthread_init_work(&lf_policy->work, lagfree_work_func);
         lf_policies[policy->cpu] = lf_policy;
-
+        
         return sysfs_create_group(&policy->kobj, &dbs_attr_group);
 }
 
 static void lagfree_exit(struct cpufreq_policy *policy)
 {
         struct lagfree_policy *lf_policy = lf_policies[policy->cpu];
-
         sysfs_remove_group(&policy->kobj, &dbs_attr_group);
         kfree(lf_policy);
         lf_policies[policy->cpu] = NULL;
@@ -251,7 +214,6 @@ static void lagfree_exit(struct cpufreq_policy *policy)
 static int lagfree_start(struct cpufreq_policy *policy)
 {
         struct lagfree_policy *lf_policy = lf_policies[policy->cpu];
-        struct lagfree_cpu *lf_cpu;
         int j;
 
         if (!lf_policy) return -ENODEV;
@@ -259,17 +221,18 @@ static int lagfree_start(struct cpufreq_policy *policy)
         lf_policy->requested_freq = policy->cur;
         lf_policy->prev_idle = get_cpu_idle_time_us(policy->cpu, &lf_policy->prev_wall);
         lf_policy->last_update = 0;
+        lf_policy->work_in_progress = false;
 
-        /* PERBAIKAN: Aktifkan fitur Fast Switch jika IC mendukung */
-        cpufreq_enable_fast_switch(policy);
-        lf_policy->fast_switch_enabled = policy->fast_switch_enabled;
+        /* PENCIPTAAN THREAD VIP: Mengkloning cara kerja Schedutil */
+        lf_policy->worker = kthread_create_worker(0, "lagfree_vip_%d", policy->cpu);
+        if (IS_ERR(lf_policy->worker)) {
+                return PTR_ERR(lf_policy->worker);
+        }
 
         for_each_cpu(j, policy->cpus) {
-                lf_cpu = &per_cpu(lagfree_cpus, j);
+                struct lagfree_cpu *lf_cpu = &per_cpu(lagfree_cpus, j);
                 lf_cpu->cpu = j;
                 lf_cpu->lf_policy = lf_policy;
-                
-                /* Tanam parasit pengintai ke dalam EAS MediaTek! */
                 cpufreq_add_update_util_hook(j, &lf_cpu->update_util, lagfree_update_util);
         }
         return 0;
@@ -280,15 +243,11 @@ static void lagfree_stop(struct cpufreq_policy *policy)
         struct lagfree_policy *lf_policy = lf_policies[policy->cpu];
         int j;
 
-        for_each_cpu(j, policy->cpus) {
-                cpufreq_remove_update_util_hook(j);
-        }
-
-        irq_work_sync(&lf_policy->irq_work);
-        cancel_work_sync(&lf_policy->work);
-
-        if (lf_policy->fast_switch_enabled) {
-                cpufreq_disable_fast_switch(policy);
+        for_each_cpu(j, policy->cpus) cpufreq_remove_update_util_hook(j);
+        
+        if (lf_policy->worker) {
+                kthread_destroy_worker(lf_policy->worker);
+                lf_policy->worker = NULL;
         }
 }
 
@@ -296,21 +255,18 @@ static void lagfree_limits(struct cpufreq_policy *policy)
 {
         struct lagfree_policy *lf_policy = lf_policies[policy->cpu];
         if (!lf_policy) return;
-
-        if (lf_policy->requested_freq < policy->min)
-                lf_policy->requested_freq = policy->min;
-        else if (lf_policy->requested_freq > policy->max)
-                lf_policy->requested_freq = policy->max;
+        if (lf_policy->requested_freq < policy->min) lf_policy->requested_freq = policy->min;
+        else if (lf_policy->requested_freq > policy->max) lf_policy->requested_freq = policy->max;
 }
 
 struct cpufreq_governor cpufreq_gov_lagfree = {
-        .name                = "Shas_Dream",
-        .init                = lagfree_init,
-        .exit                = lagfree_exit,
-        .start                = lagfree_start,
-        .stop                = lagfree_stop,
-        .limits              = lagfree_limits,
-        .owner                = THIS_MODULE,
+        .name       = "Shas_Dream",
+        .init       = lagfree_init,
+        .exit       = lagfree_exit,
+        .start      = lagfree_start,
+        .stop       = lagfree_stop,
+        .limits     = lagfree_limits,
+        .owner      = THIS_MODULE,
 };
 
 static int lagfree_pm_notify(struct notifier_block *nb, unsigned long action, void *ptr)
@@ -321,7 +277,6 @@ static int lagfree_pm_notify(struct notifier_block *nb, unsigned long action, vo
         }
         return NOTIFY_OK;
 }
-
 static struct notifier_block lagfree_pm_notifier = { .notifier_call = lagfree_pm_notify };
 
 static int __init cpufreq_gov_lagfree_init(void)
@@ -329,15 +284,14 @@ static int __init cpufreq_gov_lagfree_init(void)
         register_pm_notifier(&lagfree_pm_notifier);
         return cpufreq_register_governor(&cpufreq_gov_lagfree);
 }
-
 static void __exit cpufreq_gov_lagfree_exit(void)
 {
         unregister_pm_notifier(&lagfree_pm_notifier);
         cpufreq_unregister_governor(&cpufreq_gov_lagfree);
 }
 
-MODULE_AUTHOR ("Emilio López & Ported to EAS by Gemini");
-MODULE_DESCRIPTION ("Modern Event-Driven Lagfree CPU Governor for Kernel 4.19+");
+MODULE_AUTHOR ("Gemini");
+MODULE_DESCRIPTION ("Ultra-Safe VIP KThread Lagfree Governor");
 MODULE_LICENSE ("GPL");
 
 fs_initcall(cpufreq_gov_lagfree_init);
