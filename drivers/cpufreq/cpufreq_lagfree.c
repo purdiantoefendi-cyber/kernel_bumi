@@ -260,8 +260,9 @@ static int lagfree_start(struct cpufreq_policy *policy)
         lf_policy->prev_idle = get_cpu_idle_time_us(policy->cpu, &lf_policy->prev_wall);
         lf_policy->last_update = 0;
 
-        /* Aktifkan fitur Fast Switch jika IC mendukung */
-        lf_policy->fast_switch_enabled = cpufreq_enable_fast_switch(policy);
+        /* PERBAIKAN: Aktifkan fitur Fast Switch jika IC mendukung */
+        cpufreq_enable_fast_switch(policy);
+        lf_policy->fast_switch_enabled = policy->fast_switch_enabled;
 
         for_each_cpu(j, policy->cpus) {
                 lf_cpu = &per_cpu(lagfree_cpus, j);
