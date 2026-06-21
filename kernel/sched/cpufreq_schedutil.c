@@ -90,13 +90,13 @@ static void big_cluster_hotplug_work_fn(struct work_struct *work)
                 /* Layar Mati: Hard Disable (Putus Arus) Big Cluster */
                 for (cpu = 6; cpu <= 7; cpu++) {
                         if (cpu_online(cpu))
-                                remove_cpu(cpu);
+                                cpu_down(cpu); /* <--- DIGANTI MENJADI cpu_down */
                 }
         } else {
                 /* Layar Nyala: Hard Enable (Sambung Arus) Big Cluster */
                 for (cpu = 6; cpu <= 7; cpu++) {
                         if (!cpu_online(cpu))
-                                add_cpu(cpu);
+                                cpu_up(cpu);   /* <--- DIGANTI MENJADI cpu_up */
                 }
         }
 }
