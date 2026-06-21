@@ -18,6 +18,8 @@
 #include <linux/sched/cpufreq.h>
 #include <trace/events/power.h>
 #include <linux/suspend.h>
+#include <linux/cpu.h>
+#include <linux/workqueue.h>
 #include "cpufreq_schedutil.h"
 
 void (*cpufreq_notifier_fp)(int cluster_id, unsigned long freq);
@@ -80,14 +82,37 @@ static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
 /* Sensor Status Layar/Sleep */
 bool sugov_suspended = false;
 
+/* PEKERJA HOTPLUG: Pemutus/Penyambung Arus Big Cluster (Core 6 & 7) */
+static void big_cluster_hotplug_work_fn(struct work_struct *work)
+{
+        int cpu;
+        if (sugov_suspended) {
+                /* Layar Mati: Hard Disable (Putus Arus) Big Cluster */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        if (cpu_online(cpu))
+                                remove_cpu(cpu);
+                }
+        } else {
+                /* Layar Nyala: Hard Enable (Sambung Arus) Big Cluster */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        if (!cpu_online(cpu))
+                                add_cpu(cpu);
+                }
+        }
+}
+static DECLARE_WORK(big_cluster_hotplug_work, big_cluster_hotplug_work_fn);
+
+/* SENSOR LAYAR MATI */
 static int sugov_pm_notify(struct notifier_block *nb, unsigned long action, void *ptr)
 {
         switch (action) {
         case PM_SUSPEND_PREPARE:
-                sugov_suspended = true; /* Layar mati / Masuk Sleep */
+                sugov_suspended = true;
+                schedule_work(&big_cluster_hotplug_work);
                 break;
         case PM_POST_SUSPEND:
-                sugov_suspended = false; /* Layar nyala / Bangun */
+                sugov_suspended = false;
+                schedule_work(&big_cluster_hotplug_work);
                 break;
         }
         return NOTIFY_OK;
