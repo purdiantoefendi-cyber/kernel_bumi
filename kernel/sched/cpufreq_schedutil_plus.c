@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2019 MediaTek Inc.
- * Modified with Lagfree (70-30) & Soft-Disable Logic by Gemini
+ * Modified with Lagfree (60-30) & Extreme Soft-Disable by Gemini
  */
 
-/* Mengambil data sensor layar dari file utama */
 extern bool sugov_suspended; 
 
 static unsigned int get_next_freq(struct sugov_policy *sg_policy,
@@ -18,9 +17,7 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 
 	/* --- MODE STANDBY: SAAT LAYAR MATI --- */
 	if (unlikely(sugov_suspended)) {
-		/* Big Cluster (6 & 7) sudah di-Hard Disable oleh Hotplug.
-		 * Untuk core yang tersisa (LITTLE Cluster), kita paksa 
-		 * berjalan di frekuensi paling pelan (Soft Disable). */
+		/* LITTLE Cluster yang tersisa dipaksa berjalan pada kecepatan minimum mutlak */
 		freq = policy->min;
 		sg_policy->cached_raw_freq = freq;
 		return cpufreq_driver_resolve_freq(policy, freq);
@@ -31,14 +28,14 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	if (max > 0)
 		load_pct = (util * 100) / max;
 
-	if (load_pct >= 70) {
-		/* Threshold 70%: Beban berat, langsung RATA KANAN (Max Freq) */
+	if (load_pct >= 60) {
+		/* Threshold 60%: Lebih agresif, langsung gas pol ke Max Freq! */
 		freq = policy->max;
 	} else if (load_pct <= 30) {
-		/* Threshold 30%: Beban ringan, langsung MODE HEMAT (Min Freq) */
+		/* Threshold 30%: Beban ringan, langsung drop ke Mode Hemat */
 		freq = policy->min;
 	} else {
-		/* Di antara 31% - 69%: Transisi halus dari MediaTek */
+		/* Di antara 31% - 59%: Transisi mulus bawaan MediaTek */
 		freq = mtk_map_util_freq(cpu, util);
 	}
 	/* -------------------------------------- */

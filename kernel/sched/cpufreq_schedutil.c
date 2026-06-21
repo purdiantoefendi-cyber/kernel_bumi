@@ -82,23 +82,29 @@ static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
 /* Sensor Status Layar/Sleep */
 bool sugov_suspended = false;
 
-/* PEKERJA HOTPLUG: Pemutus/Penyambung Arus Big Cluster (Core 6 & 7) */
+/* PEKERJA HOTPLUG EKSTREM: Prioritas Instan */
 static void big_cluster_hotplug_work_fn(struct work_struct *work)
 {
         int cpu;
+        
+        /* Kunci akses hardware agar tidak ditunda oleh proses Android lain */
+        lock_device_hotplug();
+        
         if (sugov_suspended) {
-                /* Layar Mati: Hard Disable (Putus Arus) Big Cluster */
+                /* LAYAR MATI: Evakuasi semua task ke LITTLE seketika, lalu Putus Arus Big Cluster */
                 for (cpu = 6; cpu <= 7; cpu++) {
                         if (cpu_online(cpu))
-                                cpu_down(cpu); /* <--- DIGANTI MENJADI cpu_down */
+                                cpu_down(cpu);
                 }
         } else {
-                /* Layar Nyala: Hard Enable (Sambung Arus) Big Cluster */
+                /* LAYAR NYALA: Alirkan kembali arus ke Big Cluster */
                 for (cpu = 6; cpu <= 7; cpu++) {
                         if (!cpu_online(cpu))
-                                cpu_up(cpu);   /* <--- DIGANTI MENJADI cpu_up */
+                                cpu_up(cpu);
                 }
         }
+        
+        unlock_device_hotplug();
 }
 static DECLARE_WORK(big_cluster_hotplug_work, big_cluster_hotplug_work_fn);
 
@@ -108,11 +114,13 @@ static int sugov_pm_notify(struct notifier_block *nb, unsigned long action, void
         switch (action) {
         case PM_SUSPEND_PREPARE:
                 sugov_suspended = true;
-                schedule_work(&big_cluster_hotplug_work);
+                /* PAKSA EKSEKUSI INSTAN: Masukkan ke antrean VIP (High Priority Workqueue) */
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
                 break;
         case PM_POST_SUSPEND:
                 sugov_suspended = false;
-                schedule_work(&big_cluster_hotplug_work);
+                /* PAKSA BANGUN INSTAN */
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
                 break;
         }
         return NOTIFY_OK;
