@@ -17,6 +17,7 @@
 
 #include <linux/sched/cpufreq.h>
 #include <trace/events/power.h>
+#include <linux/suspend.h>
 #include "cpufreq_schedutil.h"
 
 void (*cpufreq_notifier_fp)(int cluster_id, unsigned long freq);
@@ -75,6 +76,26 @@ struct sugov_cpu {
 };
 
 static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
+
+/* Sensor Status Layar/Sleep */
+bool sugov_suspended = false;
+
+static int sugov_pm_notify(struct notifier_block *nb, unsigned long action, void *ptr)
+{
+        switch (action) {
+        case PM_SUSPEND_PREPARE:
+                sugov_suspended = true; /* Layar mati / Masuk Sleep */
+                break;
+        case PM_POST_SUSPEND:
+                sugov_suspended = false; /* Layar nyala / Bangun */
+                break;
+        }
+        return NOTIFY_OK;
+}
+
+static struct notifier_block sugov_pm_notifier = {
+        .notifier_call = sugov_pm_notify,
+};
 
 /************************ Governor internals ***********************/
 
@@ -1201,7 +1222,8 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 
 static int __init sugov_register(void)
 {
-	return cpufreq_register_governor(&schedutil_gov);
+        register_pm_notifier(&sugov_pm_notifier); /* Daftarkan sensor di sini */
+        return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
 
