@@ -57,29 +57,33 @@ config IOSCHED_PERFORMANCE
 
 
 choice
+        prompt "Default I/O scheduler"
+        default DEFAULT_PERFORMANCE
+        help
+          Select the I/O scheduler which will be used by default for all
+          block devices.
 
-	prompt "Default I/O scheduler"
-	default DEFAULT_CFQ
-	help
-	  Select the I/O scheduler which will be used by default for all
-	  block devices.
+        config DEFAULT_PERFORMANCE
+                bool "Performance" if IOSCHED_PERFORMANCE=y
 
-	config DEFAULT_DEADLINE
-		bool "Deadline" if IOSCHED_DEADLINE=y
+        config DEFAULT_DEADLINE
+                bool "Deadline" if IOSCHED_DEADLINE=y
 
-	config DEFAULT_CFQ
-		bool "CFQ" if IOSCHED_CFQ=y
+        config DEFAULT_CFQ
+                bool "CFQ" if IOSCHED_CFQ=y
 
-	config DEFAULT_NOOP
-		bool "No-op"
+        config DEFAULT_NOOP
+                bool "No-op"
 
 endchoice
 
 config DEFAULT_IOSCHED
-	string
-	default "deadline" if DEFAULT_DEADLINE
-	default "cfq" if DEFAULT_CFQ
-	default "noop" if DEFAULT_NOOP
+        string
+        default "performance" if DEFAULT_PERFORMANCE
+        default "deadline" if DEFAULT_DEADLINE
+        default "cfq" if DEFAULT_CFQ
+        default "noop" if DEFAULT_NOOP
+
 
 config MQ_IOSCHED_DEADLINE
 	tristate "MQ deadline I/O scheduler"
