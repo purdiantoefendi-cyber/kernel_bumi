@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2019 MediaTek Inc.
- * Modified with Lagfree (60-30) & Extreme Soft-Disable by Gemini
+ * Modified with Lagfree (65-35) & Extreme Soft-Disable by Gemini
  */
 
 extern bool sugov_suspended; 
@@ -28,14 +28,14 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	if (max > 0)
 		load_pct = (util * 100) / max;
 
-	if (load_pct >= 60) {
-		/* Threshold 60%: Lebih agresif, langsung gas pol ke Max Freq! */
+	if (load_pct >= 65) {
+		/* Threshold 65%: Titik seimbang performa, langsung gas pol ke Max Freq! */
 		freq = policy->max;
-	} else if (load_pct <= 30) {
-		/* Threshold 30%: Beban ringan, langsung drop ke Mode Hemat */
+	} else if (load_pct <= 35) {
+		/* Threshold 35%: Beban ringan, lebih cepat drop ke Mode Hemat (Min Freq) */
 		freq = policy->min;
 	} else {
-		/* Di antara 31% - 59%: Transisi mulus bawaan MediaTek */
+		/* Di antara 36% - 64%: Transisi mulus bawaan MediaTek */
 		freq = mtk_map_util_freq(cpu, util);
 	}
 	/* -------------------------------------- */
