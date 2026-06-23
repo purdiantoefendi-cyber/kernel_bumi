@@ -983,10 +983,7 @@ int elevator_init_mq(struct request_queue *q)
 	if (unlikely(q->elevator))
 		goto out;
 
-	/* BARIS ASLI: e = elevator_get(q, "mq-deadline", false); */
-	/* UBAH MENJADI: */
-	e = elevator_get(q, "performance", false);
-	
+	e = elevator_get(q, "mq-deadline", false);
 	if (!e)
 		goto out;
 
@@ -1118,13 +1115,6 @@ ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 			  size_t count)
 {
 	int ret;
-
-	/* --- INJEKSI KUNCI MUTLAK PERFORMANCE --- */
-	/* Jika ada yang meminta selain "performance", pura-pura sukses tapi abaikan! */
-	if (strncmp(name, "performance", 11) != 0) {
-		return count; 
-	}
-	/* ---------------------------------------- */
 
 	if (!(q->mq_ops || q->request_fn) || !elv_support_iosched(q))
 		return count;
