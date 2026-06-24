@@ -9,9 +9,16 @@
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
-#include <linux/interrupt.h>
 
-/* PERUBAHAN UTAMA: Struktur data sekarang terikat per-jalur (HCTX), bukan global */
+/* * Struktur dummy untuk Global Queue. 
+ * Ini wajib ada untuk mencegah kernel panic pada custom kernel Android
+ * yang mencoba membaca q->elevator->elevator_data.
+ */
+struct gamer_data {
+        int dummy; 
+};
+
+/* Struktur data per-Hardware Context (Jalur multi-core) */
 struct gamer_hctx_data {
         struct list_head read_list;
         struct list_head write_list;
@@ -22,13 +29,16 @@ struct gamer_hctx_data {
 static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
                                   struct list_head *list, bool at_head)
 {
-        /* Mengambil data dari sched_data milik HCTX spesifik */
         struct gamer_hctx_data *ghd = hctx->sched_data;
         struct request *rq, *n;
         unsigned long flags;
 
+        /* Keamanan tambahan: Cegah eksekusi jika inisialisasi gagal/belum siap */
+        if (!ghd)
+                return;
+
         spin_lock_irqsave(&ghd->lock, flags);
-        
+
         list_for_each_entry_safe(rq, n, list, queuelist) {
                 list_del_init(&rq->queuelist);
 
@@ -44,7 +54,7 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
                                 list_add_tail(&rq->queuelist, &ghd->write_list);
                 }
         }
-        
+
         spin_unlock_irqrestore(&ghd->lock, flags);
 }
 
@@ -53,6 +63,9 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
         struct gamer_hctx_data *ghd = hctx->sched_data;
         struct request *rq = NULL;
         unsigned long flags;
+
+        if (!ghd)
+                return NULL;
 
         spin_lock_irqsave(&ghd->lock, flags);
 
@@ -65,7 +78,7 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
         else if (!list_empty(&ghd->write_list)) {
                 rq = list_first_entry(&ghd->write_list, struct request, queuelist);
                 list_del_init(&rq->queuelist);
-                ghd->read_count = 0;
+                ghd->read_count = 0; /* Reset counter setelah WRITE dieksekusi */
         }
 
         spin_unlock_irqrestore(&ghd->lock, flags);
@@ -76,22 +89,45 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
 static bool gamer_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
-        bool has_work;
-        unsigned long flags;
 
-        spin_lock_irqsave(&ghd->lock, flags);
-        has_work = !list_empty(&ghd->read_list) || !list_empty(&ghd->write_list);
-        spin_unlock_irqrestore(&ghd->lock, flags);
+        if (!ghd)
+                return false;
 
-        return has_work;
+        /* * PERUBAHAN UTAMA: Menggunakan fungsi lockless (list_empty_careful).
+         * Mencegah soft lockup / CPU macet akibat spinlock yang dieksekusi terus-menerus.
+         */
+        return !list_empty_careful(&ghd->read_list) || !list_empty_careful(&ghd->write_list);
 }
 
-/* PERUBAHAN UTAMA: Inisialisasi per Hardware Context */
+/* ==========================================================
+ * Inisialisasi Level Global (Mencegah Android Kernel Freeze)
+ * ========================================================== */
+static int gamer_init_sched(struct request_queue *q, struct elevator_type *e)
+{
+        struct gamer_data *gd;
+
+        /* Alokasi data global agar q->elevator->elevator_data tidak NULL */
+        gd = kzalloc_node(sizeof(*gd), GFP_KERNEL, q->node);
+        if (!gd)
+                return -ENOMEM;
+
+        q->elevator->elevator_data = gd;
+        return 0;
+}
+
+static void gamer_exit_sched(struct elevator_queue *e)
+{
+        struct gamer_data *gd = e->elevator_data;
+        kfree(gd);
+}
+
+/* ==========================================================
+ * Inisialisasi Level Hardware Context (Blk-MQ murni)
+ * ========================================================== */
 static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 {
         struct gamer_hctx_data *ghd;
 
-        /* Alokasi memori khusus untuk jalur/node ini */
         ghd = kzalloc_node(sizeof(*ghd), GFP_KERNEL, hctx->numa_node);
         if (!ghd)
                 return -ENOMEM;
@@ -101,12 +137,10 @@ static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         spin_lock_init(&ghd->lock);
         ghd->read_count = 0;
 
-        /* Pasangkan data ke hctx */
         hctx->sched_data = ghd;
         return 0;
 }
 
-/* PERUBAHAN UTAMA: Pembersihan per Hardware Context */
 static void gamer_exit_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
@@ -115,11 +149,13 @@ static void gamer_exit_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 
 static struct elevator_type gamer_sched = {
         .ops.mq = {
+                .init_sched = gamer_init_sched,     /* Wajib ditambahkan */
+                .exit_sched = gamer_exit_sched,     /* Wajib ditambahkan */
+                .init_hctx = gamer_init_hctx,
+                .exit_hctx = gamer_exit_hctx,
                 .insert_requests = gamer_insert_requests,
                 .dispatch_request = gamer_dispatch_request,
                 .has_work = gamer_has_work,
-                .init_hctx = gamer_init_hctx, /* Memanggil inisialisasi HCTX */
-                .exit_hctx = gamer_exit_hctx, /* Memanggil pembersihan HCTX */
         },
         .elevator_name = "gamer",
         .elevator_owner = THIS_MODULE,
