@@ -66,6 +66,9 @@ choice
         config DEFAULT_PERFORMANCE
                 bool "Performance" if IOSCHED_PERFORMANCE=y
 
+        config DEFAULT_ZEN
+                bool "Zen" if IOSCHED_ZEN=y
+
         config DEFAULT_DEADLINE
                 bool "Deadline" if IOSCHED_DEADLINE=y
 
@@ -80,6 +83,7 @@ endchoice
 config DEFAULT_IOSCHED
         string
         default "performance" if DEFAULT_PERFORMANCE
+        default "zen" if DEFAULT_ZEN
         default "deadline" if DEFAULT_DEADLINE
         default "cfq" if DEFAULT_CFQ
         default "noop" if DEFAULT_NOOP
