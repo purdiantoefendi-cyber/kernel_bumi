@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * perf_row: Performance I/O Scheduler with ROW-like Quantum (Android 4.19+)
+ * Performance I/O Scheduler with ROW-like Quantum (Android 4.19+ blk-mq)
+ * Optimized for gaming and instant responsiveness.
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -23,7 +24,7 @@ struct perf_hctx_data {
 
         int read_count;
         int write_count;
-        int current_prio; // 0 = READ, 1 = WRITE
+        int current_prio; /* 0 = READ, 1 = WRITE */
 };
 
 static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
@@ -56,10 +57,10 @@ static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
                         rq = list_first_entry(&hd->read_list, struct request, queuelist);
                         hd->read_count++;
                 } else {
-                        // Kuota Read habis ATAU Read kosong -> Coba pindah ke Write
+                        /* Kuota Read habis ATAU Read kosong -> Coba pindah ke Write */
                         hd->read_count = 0;
                         if (!list_empty(&hd->write_list)) {
-                                hd->current_prio = 1; // Ubah prioritas ke WRITE
+                                hd->current_prio = 1; /* Ubah prioritas ke WRITE */
                                 rq = list_first_entry(&hd->write_list, struct request, queuelist);
                                 hd->write_count = 1;
                         } else if (!list_empty(&hd->read_list)) {
@@ -73,10 +74,10 @@ static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
                         rq = list_first_entry(&hd->write_list, struct request, queuelist);
                         hd->write_count++;
                 } else {
-                        // Kuota Write habis ATAU Write kosong -> Coba pindah ke Read
+                        /* Kuota Write habis ATAU Write kosong -> Coba pindah ke Read */
                         hd->write_count = 0;
                         if (!list_empty(&hd->read_list)) {
-                                hd->current_prio = 0; // Kembalikan prioritas ke READ
+                                hd->current_prio = 0; /* Kembalikan prioritas ke READ */
                                 rq = list_first_entry(&hd->read_list, struct request, queuelist);
                                 hd->read_count = 1;
                         } else if (!list_empty(&hd->write_list)) {
@@ -121,7 +122,7 @@ static int perf_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         
         hd->read_count = 0;
         hd->write_count = 0;
-        hd->current_prio = 0; // Selalu mulai dengan prioritas READ
+        hd->current_prio = 0; /* Selalu mulai dengan prioritas READ */
 
         hctx->sched_data = hd;
         return 0;
@@ -141,7 +142,7 @@ static struct elevator_type perf_sched = {
                 .init_hctx = perf_init_hctx,
                 .exit_hctx = perf_exit_hctx,
         },
-        .elevator_name = "perf_row",
+        .elevator_name = "performance", 
         .elevator_owner = THIS_MODULE,
 };
 
