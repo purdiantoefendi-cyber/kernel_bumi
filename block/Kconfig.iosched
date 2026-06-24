@@ -41,18 +41,19 @@ config CFQ_GROUP_IOSCHED
 	  Enable group IO scheduling in CFQ.
 
 config IOSCHED_ZEN
-	tristate "Zen I/O scheduler"
-	default y
-	---help---
-	  FCFS, dispatches are back-inserted, deadlines ensure fairness.
-	  Should work best with devices where there is no travel delay.
+        bool "Zen I/O scheduler (MQ Edition)"
+        default y
+        ---help---
+          Zen IO scheduler ported to Multi-Queue (blk-mq) architecture.
+          FCFS, dispatches are back-inserted, deadlines ensure fairness.
+          Synchronous requests have priority over asynchronous.
 
 config IOSCHED_GAMER
-    tristate "Gamer I/O scheduler"
+    bool "Gamer I/O scheduler"
     default y
 
 config IOSCHED_PERFORMANCE
-    tristate "Performance I/O scheduler"
+    bool "Performance I/O scheduler"
     default y
 
 
