@@ -14,7 +14,7 @@ config IOSCHED_NOOP
 	  the kernel.
 
 config IOSCHED_DEADLINE
-	tristate "Deadline I/O scheduler"
+	bool "Deadline I/O scheduler"
 	default y
 	---help---
 	  The deadline I/O scheduler is simple and compact. It will provide
@@ -65,10 +65,10 @@ choice
           block devices.
 
         config DEFAULT_PERFORMANCE
-                bool "Performance" if IOSCHED_PERFORMANCE=y
+                bool "performance" if IOSCHED_PERFORMANCE=y
 
         config DEFAULT_ZEN
-                bool "Zen" if IOSCHED_ZEN=y
+                bool "zen" if IOSCHED_ZEN=y
 
         config DEFAULT_DEADLINE
                 bool "Deadline" if IOSCHED_DEADLINE=y
@@ -91,13 +91,13 @@ config DEFAULT_IOSCHED
 
 
 config MQ_IOSCHED_DEADLINE
-	tristate "MQ deadline I/O scheduler"
+	bool "MQ deadline I/O scheduler"
 	default y
 	---help---
 	  MQ version of the deadline IO scheduler.
 
 config MQ_IOSCHED_KYBER
-	tristate "Kyber I/O scheduler"
+	bool "Kyber I/O scheduler"
 	default y
 	---help---
 	  The Kyber I/O scheduler is a low-overhead scheduler suitable for
@@ -106,7 +106,7 @@ config MQ_IOSCHED_KYBER
 	  goal.
 
 config IOSCHED_BFQ
-	tristate "BFQ I/O scheduler"
+	bool "BFQ I/O scheduler"
 	default n
 	---help---
 	BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
