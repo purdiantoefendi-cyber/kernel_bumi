@@ -169,6 +169,7 @@ static struct elevator_type iosched_zen_mq = {
 	},
 	.elevator_name = "zen",
 	.elevator_owner = THIS_MODULE,
+	.uses_mq = true,
 };
 
 static int __init zen_init(void)
