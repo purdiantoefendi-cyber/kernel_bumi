@@ -144,6 +144,7 @@ static struct elevator_type perf_sched = {
         },
         .elevator_name = "performance", 
         .elevator_owner = THIS_MODULE,
+        .uses_mq = true,
 };
 
 static int __init perf_init(void)
