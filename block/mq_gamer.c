@@ -3,18 +3,13 @@
  * Gamer I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
  */
 #include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
-#include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
-
-#include "blk.h"
-#include "blk-mq-sched.h"
 
 #define GAMER_READ_QUANTUM 10
 #define GAMER_WRITE_QUANTUM 2
@@ -33,41 +28,30 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
                                   struct list_head *list, bool at_head)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
-        struct request *rq;
-        unsigned long flags;
+        struct request *rq, *next;
 
-        spin_lock_irqsave(&ghd->lock, flags);
-
-        while (!list_empty(list)) {
-                rq = list_first_entry(list, struct request, queuelist);
+        spin_lock(&ghd->lock);
+        list_for_each_entry_safe(rq, next, list, queuelist) {
                 list_del_init(&rq->queuelist);
 
-                if (at_head || blk_rq_is_passthrough(rq)) {
-                        if (at_head) list_add(&rq->queuelist, &ghd->vip_list);
-                        else list_add_tail(&rq->queuelist, &ghd->vip_list);
+                if (at_head) {
+                        list_add(&rq->queuelist, &ghd->vip_list);
                 } else {
-                        /* PELAPORAN WAJIB KE KERNEL AGAR TIDAK PANIC/GETAR */
-                        blk_mq_sched_request_inserted(rq);
-                        
-                        if (op_is_flush(rq->cmd_flags)) {
-                                list_add_tail(&rq->queuelist, &ghd->vip_list);
-                        } else if (rq_data_dir(rq) == READ) {
+                        if (rq_data_dir(rq) == READ)
                                 list_add_tail(&rq->queuelist, &ghd->read_list);
-                        } else {
+                        else
                                 list_add_tail(&rq->queuelist, &ghd->write_list);
-                        }
                 }
         }
-        spin_unlock_irqrestore(&ghd->lock, flags);
+        spin_unlock(&ghd->lock);
 }
 
 static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
         struct request *rq = NULL;
-        unsigned long flags;
 
-        spin_lock_irqsave(&ghd->lock, flags);
+        spin_lock(&ghd->lock);
 
         if (!list_empty(&ghd->vip_list)) {
                 rq = list_first_entry(&ghd->vip_list, struct request, queuelist);
@@ -114,14 +98,13 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
         }
 
 done:
-        spin_unlock_irqrestore(&ghd->lock, flags);
+        spin_unlock(&ghd->lock);
         return rq;
 }
 
 static bool gamer_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
-        /* LOCKLESS: Menyelamatkan CPU dari overhead agar tidak stutter/freeze */
         return !list_empty_careful(&ghd->vip_list) || 
                !list_empty_careful(&ghd->read_list) || 
                !list_empty_careful(&ghd->write_list);
@@ -166,5 +149,4 @@ static int __init gamer_init(void) { return elv_register(&gamer_sched); }
 static void __exit gamer_exit(void) { elv_unregister(&gamer_sched); }
 module_init(gamer_init);
 module_exit(gamer_exit);
-MODULE_AUTHOR("Oni");
 MODULE_LICENSE("GPL v2");
