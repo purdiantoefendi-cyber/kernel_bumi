@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Zen I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
+ * Zen I/O Scheduler (blk-mq) - NO FREEZE FINAL EDITION
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -27,21 +27,24 @@ static void zen_insert_requests(struct blk_mq_hw_ctx *hctx,
         struct zen_hctx_data *zdata = hctx->sched_data;
         struct request *rq, *next;
 
-        /* Menggunakan spin_lock biasa agar interupsi Layar Sentuh tidak mati */
         spin_lock(&zdata->lock);
-        
-        list_for_each_entry_safe(rq, next, list, queuelist) {
-                list_del_init(&rq->queuelist);
 
-                if (at_head) {
-                        list_add(&rq->queuelist, &zdata->vip_list);
-                } else {
-                        if (rq_is_sync(rq))
+        /* PENYELAMAT SILENT FREEZE: Pindahkan tanpa merusak urutan! */
+        if (at_head) {
+                list_splice_init(list, &zdata->vip_list);
+        } else {
+                list_for_each_entry_safe(rq, next, list, queuelist) {
+                        list_del_init(&rq->queuelist);
+
+                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
+                                list_add_tail(&rq->queuelist, &zdata->vip_list);
+                        else if (op_is_sync(rq->cmd_flags))
                                 list_add_tail(&rq->queuelist, &zdata->sync_list);
                         else
                                 list_add_tail(&rq->queuelist, &zdata->async_list);
                 }
         }
+
         spin_unlock(&zdata->lock);
 }
 
