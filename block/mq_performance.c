@@ -19,7 +19,6 @@
 #define PERF_WRITE_QUANTUM 10
 
 struct perf_hctx_data {
-        struct list_head vip_list;
         struct list_head read_list;
         struct list_head write_list;
         spinlock_t lock;
@@ -38,12 +37,11 @@ static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
         
         list_for_each_entry_safe(rq, next, rq_list, queuelist) {
                 if (at_head) {
-                        list_move(&rq->queuelist, &hd->vip_list);
+                        list_move(&rq->queuelist, &hd->read_list);
+                } else if (rq_data_dir(rq) == READ || op_is_flush(rq->cmd_flags) || blk_rq_is_passthrough(rq)) {
+                        list_move_tail(&rq->queuelist, &hd->read_list);
                 } else {
-                        if (rq_data_dir(rq) == READ)
-                                list_move_tail(&rq->queuelist, &hd->read_list);
-                        else
-                                list_move_tail(&rq->queuelist, &hd->write_list);
+                        list_move_tail(&rq->queuelist, &hd->write_list);
                 }
                 
                 blk_mq_sched_request_inserted(rq);
@@ -58,12 +56,6 @@ static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
         struct request *rq = NULL;
 
         spin_lock(&hd->lock);
-
-        if (!list_empty(&hd->vip_list)) {
-                rq = list_first_entry(&hd->vip_list, struct request, queuelist);
-                list_del_init(&rq->queuelist);
-                goto done;
-        }
 
         if (hd->current_prio == 0) {
                 if (!list_empty(&hd->read_list) && hd->read_count < PERF_READ_QUANTUM) {
@@ -103,7 +95,6 @@ static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
                 }
         }
 
-done:
         spin_unlock(&hd->lock);
         return rq;
 }
@@ -111,8 +102,7 @@ done:
 static bool perf_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
-        return !list_empty_careful(&hd->vip_list) || 
-               !list_empty_careful(&hd->read_list) || 
+        return !list_empty_careful(&hd->read_list) || 
                !list_empty_careful(&hd->write_list);
 }
 
@@ -121,7 +111,6 @@ static int perf_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         struct perf_hctx_data *hd = kzalloc_node(sizeof(*hd), GFP_KERNEL, hctx->numa_node);
         if (!hd) return -ENOMEM;
 
-        INIT_LIST_HEAD(&hd->vip_list);
         INIT_LIST_HEAD(&hd->read_list);
         INIT_LIST_HEAD(&hd->write_list);
         spin_lock_init(&hd->lock);
