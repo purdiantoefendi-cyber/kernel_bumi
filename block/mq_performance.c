@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Performance I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
+ * Performance I/O Scheduler (blk-mq) - NO FREEZE FINAL EDITION
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -31,18 +31,23 @@ static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
         struct request *rq, *next;
 
         spin_lock(&hd->lock);
-        list_for_each_entry_safe(rq, next, list, queuelist) {
-                list_del_init(&rq->queuelist);
 
-                if (at_head) {
-                        list_add(&rq->queuelist, &hd->vip_list);
-                } else {
-                        if (rq_data_dir(rq) == READ)
+        /* PENYELAMAT SILENT FREEZE: list_splice_init! */
+        if (at_head) {
+                list_splice_init(list, &hd->vip_list);
+        } else {
+                list_for_each_entry_safe(rq, next, list, queuelist) {
+                        list_del_init(&rq->queuelist);
+
+                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
+                                list_add_tail(&rq->queuelist, &hd->vip_list);
+                        else if (rq_data_dir(rq) == READ)
                                 list_add_tail(&rq->queuelist, &hd->read_list);
                         else
                                 list_add_tail(&rq->queuelist, &hd->write_list);
                 }
         }
+
         spin_unlock(&hd->lock);
 }
 
