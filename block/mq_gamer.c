@@ -19,7 +19,6 @@
 #define GAMER_WRITE_QUANTUM 2
 
 struct gamer_hctx_data {
-        struct list_head vip_list;
         struct list_head read_list;
         struct list_head write_list;
         spinlock_t lock;
@@ -38,12 +37,11 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
         
         list_for_each_entry_safe(rq, next, rq_list, queuelist) {
                 if (at_head) {
-                        list_move(&rq->queuelist, &ghd->vip_list);
+                        list_move(&rq->queuelist, &ghd->read_list);
+                } else if (rq_data_dir(rq) == READ || op_is_flush(rq->cmd_flags) || blk_rq_is_passthrough(rq)) {
+                        list_move_tail(&rq->queuelist, &ghd->read_list);
                 } else {
-                        if (rq_data_dir(rq) == READ)
-                                list_move_tail(&rq->queuelist, &ghd->read_list);
-                        else
-                                list_move_tail(&rq->queuelist, &ghd->write_list);
+                        list_move_tail(&rq->queuelist, &ghd->write_list);
                 }
                 
                 blk_mq_sched_request_inserted(rq);
@@ -58,12 +56,6 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
         struct request *rq = NULL;
 
         spin_lock(&ghd->lock);
-
-        if (!list_empty(&ghd->vip_list)) {
-                rq = list_first_entry(&ghd->vip_list, struct request, queuelist);
-                list_del_init(&rq->queuelist);
-                goto done;
-        }
 
         if (ghd->current_prio == 0) {
                 if (!list_empty(&ghd->read_list) && ghd->read_count < GAMER_READ_QUANTUM) {
@@ -103,7 +95,6 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
                 }
         }
 
-done:
         spin_unlock(&ghd->lock);
         return rq;
 }
@@ -111,8 +102,7 @@ done:
 static bool gamer_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
-        return !list_empty_careful(&ghd->vip_list) || 
-               !list_empty_careful(&ghd->read_list) || 
+        return !list_empty_careful(&ghd->read_list) || 
                !list_empty_careful(&ghd->write_list);
 }
 
@@ -121,7 +111,6 @@ static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         struct gamer_hctx_data *ghd = kzalloc_node(sizeof(*ghd), GFP_KERNEL, hctx->numa_node);
         if (!ghd) return -ENOMEM;
 
-        INIT_LIST_HEAD(&ghd->vip_list);
         INIT_LIST_HEAD(&ghd->read_list);
         INIT_LIST_HEAD(&ghd->write_list);
         spin_lock_init(&ghd->lock);
