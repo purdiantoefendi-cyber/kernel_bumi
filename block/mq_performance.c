@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Performance I/O Scheduler (blk-mq) - ULTIMATE STABLE EDITION
+ * Performance I/O Scheduler (blk-mq) - ULTIMATE ANTI-PANIC EDITION
  */
 #include <linux/kernel.h>
 #include <linux/fs.h>
@@ -12,6 +12,9 @@
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
+
+#include "blk.h"
+#include "blk-mq-sched.h"
 
 #define PERF_READ_QUANTUM 100
 #define PERF_WRITE_QUANTUM 10
@@ -39,14 +42,20 @@ static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
                 rq = list_first_entry(list, struct request, queuelist);
                 list_del_init(&rq->queuelist);
 
-                if (at_head || blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags)) {
+                if (at_head || blk_rq_is_passthrough(rq)) {
                         if (at_head) list_add(&rq->queuelist, &hd->vip_list);
                         else list_add_tail(&rq->queuelist, &hd->vip_list);
-                } 
-                else if (rq_data_dir(rq) == READ) {
-                        list_add_tail(&rq->queuelist, &hd->read_list);
                 } else {
-                        list_add_tail(&rq->queuelist, &hd->write_list);
+                        /* PELAPORAN WAJIB KE KERNEL AGAR TIDAK PANIC/GETAR */
+                        blk_mq_sched_request_inserted(rq);
+                        
+                        if (op_is_flush(rq->cmd_flags)) {
+                                list_add_tail(&rq->queuelist, &hd->vip_list);
+                        } else if (rq_data_dir(rq) == READ) {
+                                list_add_tail(&rq->queuelist, &hd->read_list);
+                        } else {
+                                list_add_tail(&rq->queuelist, &hd->write_list);
+                        }
                 }
         }
         spin_unlock_irqrestore(&hd->lock, flags);
@@ -112,15 +121,10 @@ done:
 static bool perf_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
-        bool has_work;
-        unsigned long flags;
-
-        spin_lock_irqsave(&hd->lock, flags);
-        has_work = !list_empty(&hd->vip_list) || 
-                   !list_empty(&hd->read_list) || 
-                   !list_empty(&hd->write_list);
-        spin_unlock_irqrestore(&hd->lock, flags);
-        return has_work;
+        /* LOCKLESS: Menyelamatkan CPU dari overhead agar tidak stutter/freeze */
+        return !list_empty_careful(&hd->vip_list) || 
+               !list_empty_careful(&hd->read_list) || 
+               !list_empty_careful(&hd->write_list);
 }
 
 static int perf_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
@@ -147,11 +151,11 @@ static void perf_exit_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 
 static struct elevator_type perf_sched = {
         .ops.mq = {
-                .init_hctx = perf_init_hctx,
-                .exit_hctx = perf_exit_hctx,
                 .insert_requests = perf_insert_requests,
                 .dispatch_request = perf_dispatch_request,
                 .has_work = perf_has_work,
+                .init_hctx = perf_init_hctx,
+                .exit_hctx = perf_exit_hctx,
         },
         .elevator_name = "performance", 
         .elevator_owner = THIS_MODULE,
