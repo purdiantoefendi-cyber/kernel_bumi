@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
+/*
+ * Gamer I/O Scheduler (blk-mq) - ANTI FREEZE EDITION
+ * Optimized for maximum read responsiveness in gaming.
+ */
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
@@ -9,10 +13,6 @@
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
-
-struct gamer_data {
-        int dummy; 
-};
 
 struct gamer_hctx_data {
         struct list_head dispatch_list; /* JALUR VIP: Untuk Passthrough & Flush */
@@ -34,10 +34,7 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
         list_for_each_entry_safe(rq, n, list, queuelist) {
                 list_del_init(&rq->queuelist);
 
-                /* * ATURAN EMAS BLK-MQ: 
-                 * Perintah admin hardware (passthrough) atau perintah mendesak 
-                 * (at_head) TIDAK BOLEH ditahan. Masukkan ke Jalur VIP.
-                 */
+                /* ATURAN EMAS BLK-MQ: Jalur VIP (Bypass/Flush) */
                 if (at_head || blk_rq_is_passthrough(rq)) {
                         if (at_head)
                                 list_add(&rq->queuelist, &ghd->dispatch_list);
@@ -46,7 +43,7 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
                         continue;
                 }
 
-                /* Jika bukan perintah VIP, pisahkan ke antrean biasa */
+                /* Pisahkan Read dan Write */
                 if (rq_data_dir(rq) == READ) {
                         list_add_tail(&rq->queuelist, &ghd->read_list);
                 } else {
@@ -65,14 +62,14 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
 
         spin_lock_irqsave(&ghd->lock, flags);
 
-        /* 1. Prioritas Mutlak: Kosongkan Jalur VIP (Admin/Flush commands) terlebih dahulu */
+        /* 1. Prioritas Mutlak: Kosongkan Jalur VIP */
         if (!list_empty(&ghd->dispatch_list)) {
                 rq = list_first_entry(&ghd->dispatch_list, struct request, queuelist);
                 list_del_init(&rq->queuelist);
-                goto done; /* Langsung kirim, abaikan logika di bawah */
+                goto done; 
         }
 
-        /* 2. Logika Utama Gamer (Read over Write dengan Starvation limit = 10) */
+        /* 2. Logika Utama Gamer (Rasio Read:Write = 10:1) */
         if (!list_empty(&ghd->read_list) && (ghd->read_count < 10 || list_empty(&ghd->write_list))) {
                 rq = list_first_entry(&ghd->read_list, struct request, queuelist);
                 list_del_init(&rq->queuelist);
@@ -81,7 +78,7 @@ static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
         else if (!list_empty(&ghd->write_list)) {
                 rq = list_first_entry(&ghd->write_list, struct request, queuelist);
                 list_del_init(&rq->queuelist);
-                ghd->read_count = 0; /* Reset counter karena Write sudah jalan */
+                ghd->read_count = 0;
         }
 
 done:
@@ -92,29 +89,17 @@ done:
 static bool gamer_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
+        bool has_work;
+        unsigned long flags;
 
-        /* Beri tahu kernel jika ADA antrean di salah satu list */
-        return !list_empty_careful(&ghd->dispatch_list) || 
-               !list_empty_careful(&ghd->read_list) || 
-               !list_empty_careful(&ghd->write_list);
-}
+        /* PENYELAMAT FREEZE: Wajib dikunci agar tidak terjadi Stale Read di ARM64! */
+        spin_lock_irqsave(&ghd->lock, flags);
+        has_work = !list_empty(&ghd->dispatch_list) || 
+                   !list_empty(&ghd->read_list) || 
+                   !list_empty(&ghd->write_list);
+        spin_unlock_irqrestore(&ghd->lock, flags);
 
-static int gamer_init_sched(struct request_queue *q, struct elevator_type *e)
-{
-        struct gamer_data *gd;
-
-        gd = kzalloc_node(sizeof(*gd), GFP_KERNEL, q->node);
-        if (!gd)
-                return -ENOMEM;
-
-        q->elevator->elevator_data = gd;
-        return 0;
-}
-
-static void gamer_exit_sched(struct elevator_queue *e)
-{
-        struct gamer_data *gd = e->elevator_data;
-        kfree(gd);
+        return has_work;
 }
 
 static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
@@ -125,7 +110,7 @@ static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         if (!ghd)
                 return -ENOMEM;
 
-        INIT_LIST_HEAD(&ghd->dispatch_list); /* Inisialisasi list VIP */
+        INIT_LIST_HEAD(&ghd->dispatch_list); 
         INIT_LIST_HEAD(&ghd->read_list);
         INIT_LIST_HEAD(&ghd->write_list);
         spin_lock_init(&ghd->lock);
@@ -143,8 +128,6 @@ static void gamer_exit_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 
 static struct elevator_type gamer_sched = {
         .ops.mq = {
-                .init_sched = gamer_init_sched,     
-                .exit_sched = gamer_exit_sched,     
                 .init_hctx = gamer_init_hctx,
                 .exit_hctx = gamer_exit_hctx,
                 .insert_requests = gamer_insert_requests,
@@ -158,19 +141,16 @@ static struct elevator_type gamer_sched = {
 
 static int __init gamer_init(void)
 {
-        pr_info("Gamer I/O Scheduler loaded - Blk-MQ Architecture Ready\n");
         return elv_register(&gamer_sched);
 }
 
 static void __exit gamer_exit(void)
 {
         elv_unregister(&gamer_sched);
-        pr_info("Gamer I/O Scheduler unloaded\n");
 }
 
 module_init(gamer_init);
 module_exit(gamer_exit);
-
 MODULE_AUTHOR("Oni");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Gaming-optimized Blk-MQ I/O Scheduler");
