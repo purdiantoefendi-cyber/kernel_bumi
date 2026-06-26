@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Performance I/O Scheduler (blk-mq) - ULTIMATE ANTI-PANIC EDITION
+ * Performance I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
  */
 #include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
-#include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
-
-#include "blk.h"
-#include "blk-mq-sched.h"
 
 #define PERF_READ_QUANTUM 100
 #define PERF_WRITE_QUANTUM 10
@@ -33,41 +28,30 @@ static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
                                  struct list_head *list, bool at_head)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
-        struct request *rq;
-        unsigned long flags;
+        struct request *rq, *next;
 
-        spin_lock_irqsave(&hd->lock, flags);
-
-        while (!list_empty(list)) {
-                rq = list_first_entry(list, struct request, queuelist);
+        spin_lock(&hd->lock);
+        list_for_each_entry_safe(rq, next, list, queuelist) {
                 list_del_init(&rq->queuelist);
 
-                if (at_head || blk_rq_is_passthrough(rq)) {
-                        if (at_head) list_add(&rq->queuelist, &hd->vip_list);
-                        else list_add_tail(&rq->queuelist, &hd->vip_list);
+                if (at_head) {
+                        list_add(&rq->queuelist, &hd->vip_list);
                 } else {
-                        /* PELAPORAN WAJIB KE KERNEL AGAR TIDAK PANIC/GETAR */
-                        blk_mq_sched_request_inserted(rq);
-                        
-                        if (op_is_flush(rq->cmd_flags)) {
-                                list_add_tail(&rq->queuelist, &hd->vip_list);
-                        } else if (rq_data_dir(rq) == READ) {
+                        if (rq_data_dir(rq) == READ)
                                 list_add_tail(&rq->queuelist, &hd->read_list);
-                        } else {
+                        else
                                 list_add_tail(&rq->queuelist, &hd->write_list);
-                        }
                 }
         }
-        spin_unlock_irqrestore(&hd->lock, flags);
+        spin_unlock(&hd->lock);
 }
 
 static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
         struct request *rq = NULL;
-        unsigned long flags;
 
-        spin_lock_irqsave(&hd->lock, flags);
+        spin_lock(&hd->lock);
 
         if (!list_empty(&hd->vip_list)) {
                 rq = list_first_entry(&hd->vip_list, struct request, queuelist);
@@ -114,14 +98,13 @@ static struct request *perf_dispatch_request(struct blk_mq_hw_ctx *hctx)
         }
 
 done:
-        spin_unlock_irqrestore(&hd->lock, flags);
+        spin_unlock(&hd->lock);
         return rq;
 }
 
 static bool perf_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
-        /* LOCKLESS: Menyelamatkan CPU dari overhead agar tidak stutter/freeze */
         return !list_empty_careful(&hd->vip_list) || 
                !list_empty_careful(&hd->read_list) || 
                !list_empty_careful(&hd->write_list);
