@@ -11,6 +11,10 @@
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
 
+#include "blk.h"
+#include "blk-mq.h"
+#include "blk-mq-sched.h"
+
 #define PERF_READ_QUANTUM 100
 #define PERF_WRITE_QUANTUM 10
 
@@ -25,29 +29,26 @@ struct perf_hctx_data {
 };
 
 static void perf_insert_requests(struct blk_mq_hw_ctx *hctx,
-                                 struct list_head *list, bool at_head)
+                                 struct list_head *rq_list, bool at_head)
 {
         struct perf_hctx_data *hd = hctx->sched_data;
         struct request *rq, *next;
 
         spin_lock(&hd->lock);
-
-        /* PENYELAMAT SILENT FREEZE: list_splice_init! */
-        if (at_head) {
-                list_splice_init(list, &hd->vip_list);
-        } else {
-                list_for_each_entry_safe(rq, next, list, queuelist) {
-                        list_del_init(&rq->queuelist);
-
-                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
-                                list_add_tail(&rq->queuelist, &hd->vip_list);
-                        else if (rq_data_dir(rq) == READ)
-                                list_add_tail(&rq->queuelist, &hd->read_list);
+        
+        list_for_each_entry_safe(rq, next, rq_list, queuelist) {
+                if (at_head) {
+                        list_move(&rq->queuelist, &hd->vip_list);
+                } else {
+                        if (rq_data_dir(rq) == READ)
+                                list_move_tail(&rq->queuelist, &hd->read_list);
                         else
-                                list_add_tail(&rq->queuelist, &hd->write_list);
+                                list_move_tail(&rq->queuelist, &hd->write_list);
                 }
+                
+                blk_mq_sched_request_inserted(rq);
         }
-
+        
         spin_unlock(&hd->lock);
 }
 
