@@ -3,18 +3,13 @@
  * Zen I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
  */
 #include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
-#include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
-
-#include "blk.h"
-#include "blk-mq-sched.h"
 
 #define ZEN_SYNC_BATCH 16
 
@@ -30,41 +25,32 @@ static void zen_insert_requests(struct blk_mq_hw_ctx *hctx,
                                 struct list_head *list, bool at_head)
 {
         struct zen_hctx_data *zdata = hctx->sched_data;
-        struct request *rq;
-        unsigned long flags;
+        struct request *rq, *next;
 
-        spin_lock_irqsave(&zdata->lock, flags);
-
-        while (!list_empty(list)) {
-                rq = list_first_entry(list, struct request, queuelist);
+        /* Menggunakan spin_lock biasa agar interupsi Layar Sentuh tidak mati */
+        spin_lock(&zdata->lock);
+        
+        list_for_each_entry_safe(rq, next, list, queuelist) {
                 list_del_init(&rq->queuelist);
 
-                if (at_head || blk_rq_is_passthrough(rq)) {
-                        if (at_head) list_add(&rq->queuelist, &zdata->vip_list);
-                        else list_add_tail(&rq->queuelist, &zdata->vip_list);
+                if (at_head) {
+                        list_add(&rq->queuelist, &zdata->vip_list);
                 } else {
-                        /* PELAPORAN WAJIB KE KERNEL AGAR TIDAK PANIC/GETAR */
-                        blk_mq_sched_request_inserted(rq);
-                        
-                        if (op_is_flush(rq->cmd_flags)) {
-                                list_add_tail(&rq->queuelist, &zdata->vip_list);
-                        } else if (op_is_sync(rq->cmd_flags)) {
+                        if (rq_is_sync(rq))
                                 list_add_tail(&rq->queuelist, &zdata->sync_list);
-                        } else {
+                        else
                                 list_add_tail(&rq->queuelist, &zdata->async_list);
-                        }
                 }
         }
-        spin_unlock_irqrestore(&zdata->lock, flags);
+        spin_unlock(&zdata->lock);
 }
 
 static struct request *zen_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
         struct zen_hctx_data *zdata = hctx->sched_data;
         struct request *rq = NULL;
-        unsigned long flags;
 
-        spin_lock_irqsave(&zdata->lock, flags);
+        spin_lock(&zdata->lock);
 
         if (!list_empty(&zdata->vip_list)) {
                 rq = list_first_entry(&zdata->vip_list, struct request, queuelist);
@@ -87,14 +73,13 @@ static struct request *zen_dispatch_request(struct blk_mq_hw_ctx *hctx)
         }
 
 done:
-        spin_unlock_irqrestore(&zdata->lock, flags);
+        spin_unlock(&zdata->lock);
         return rq;
 }
 
 static bool zen_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct zen_hctx_data *zdata = hctx->sched_data;
-        /* LOCKLESS: Menyelamatkan CPU dari overhead agar tidak stutter/freeze */
         return !list_empty_careful(&zdata->vip_list) || 
                !list_empty_careful(&zdata->sync_list) || 
                !list_empty_careful(&zdata->async_list);
