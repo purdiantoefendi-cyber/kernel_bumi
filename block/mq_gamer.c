@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Gamer I/O Scheduler (blk-mq) - ULTIMATE ANTI-FREEZE EDITION
+ * Gamer I/O Scheduler (blk-mq) - NO FREEZE FINAL EDITION
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -31,18 +31,23 @@ static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
         struct request *rq, *next;
 
         spin_lock(&ghd->lock);
-        list_for_each_entry_safe(rq, next, list, queuelist) {
-                list_del_init(&rq->queuelist);
 
-                if (at_head) {
-                        list_add(&rq->queuelist, &ghd->vip_list);
-                } else {
-                        if (rq_data_dir(rq) == READ)
+        /* PENYELAMAT SILENT FREEZE: list_splice_init! */
+        if (at_head) {
+                list_splice_init(list, &ghd->vip_list);
+        } else {
+                list_for_each_entry_safe(rq, next, list, queuelist) {
+                        list_del_init(&rq->queuelist);
+
+                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
+                                list_add_tail(&rq->queuelist, &ghd->vip_list);
+                        else if (rq_data_dir(rq) == READ)
                                 list_add_tail(&rq->queuelist, &ghd->read_list);
                         else
                                 list_add_tail(&rq->queuelist, &ghd->write_list);
                 }
         }
+
         spin_unlock(&ghd->lock);
 }
 
