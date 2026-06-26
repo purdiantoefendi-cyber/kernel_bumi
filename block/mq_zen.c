@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Zen I/O Scheduler (blk-mq) - NO FREEZE FINAL EDITION
+ * Referenced from Kyber architecture.
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -10,6 +11,11 @@
 #include <linux/init.h>
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
+
+/* WAJIB: Header lokal block layer untuk pelaporan ke sistem */
+#include "blk.h"
+#include "blk-mq.h"
+#include "blk-mq-sched.h"
 
 #define ZEN_SYNC_BATCH 16
 
@@ -22,29 +28,28 @@ struct zen_hctx_data {
 };
 
 static void zen_insert_requests(struct blk_mq_hw_ctx *hctx,
-                                struct list_head *list, bool at_head)
+                                struct list_head *rq_list, bool at_head)
 {
         struct zen_hctx_data *zdata = hctx->sched_data;
         struct request *rq, *next;
 
         spin_lock(&zdata->lock);
-
-        /* PENYELAMAT SILENT FREEZE: Pindahkan tanpa merusak urutan! */
-        if (at_head) {
-                list_splice_init(list, &zdata->vip_list);
-        } else {
-                list_for_each_entry_safe(rq, next, list, queuelist) {
-                        list_del_init(&rq->queuelist);
-
-                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
-                                list_add_tail(&rq->queuelist, &zdata->vip_list);
-                        else if (op_is_sync(rq->cmd_flags))
-                                list_add_tail(&rq->queuelist, &zdata->sync_list);
+        
+        /* Meniru arsitektur mutlak Kyber I/O */
+        list_for_each_entry_safe(rq, next, rq_list, queuelist) {
+                if (at_head) {
+                        list_move(&rq->queuelist, &zdata->vip_list);
+                } else {
+                        if (op_is_sync(rq->cmd_flags))
+                                list_move_tail(&rq->queuelist, &zdata->sync_list);
                         else
-                                list_add_tail(&rq->queuelist, &zdata->async_list);
+                                list_move_tail(&rq->queuelist, &zdata->async_list);
                 }
+                
+                /* Lapor ke WBT & Kernel Block Layer */
+                blk_mq_sched_request_inserted(rq);
         }
-
+        
         spin_unlock(&zdata->lock);
 }
 
