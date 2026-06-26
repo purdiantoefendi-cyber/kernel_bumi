@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Zen I/O Scheduler (blk-mq) - NO FREEZE FINAL EDITION
- * Referenced from Kyber architecture.
+ * Architected after Kyber & MQ-Deadline
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -12,7 +12,6 @@
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
 
-/* WAJIB: Header lokal block layer untuk pelaporan ke sistem */
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-sched.h"
@@ -20,7 +19,6 @@
 #define ZEN_SYNC_BATCH 16
 
 struct zen_hctx_data {
-        struct list_head vip_list;
         struct list_head sync_list;
         struct list_head async_list;
         unsigned int sync_count;
@@ -35,18 +33,17 @@ static void zen_insert_requests(struct blk_mq_hw_ctx *hctx,
 
         spin_lock(&zdata->lock);
         
-        /* Meniru arsitektur mutlak Kyber I/O */
+        /* Meniru metode atomik Kyber */
         list_for_each_entry_safe(rq, next, rq_list, queuelist) {
                 if (at_head) {
-                        list_move(&rq->queuelist, &zdata->vip_list);
+                        /* Prioritas mendesak ditaruh di paling depan antrean Sync */
+                        list_move(&rq->queuelist, &zdata->sync_list);
+                } else if (op_is_sync(rq->cmd_flags) || op_is_flush(rq->cmd_flags) || blk_rq_is_passthrough(rq)) {
+                        list_move_tail(&rq->queuelist, &zdata->sync_list);
                 } else {
-                        if (op_is_sync(rq->cmd_flags))
-                                list_move_tail(&rq->queuelist, &zdata->sync_list);
-                        else
-                                list_move_tail(&rq->queuelist, &zdata->async_list);
+                        list_move_tail(&rq->queuelist, &zdata->async_list);
                 }
                 
-                /* Lapor ke WBT & Kernel Block Layer */
                 blk_mq_sched_request_inserted(rq);
         }
         
@@ -59,12 +56,6 @@ static struct request *zen_dispatch_request(struct blk_mq_hw_ctx *hctx)
         struct request *rq = NULL;
 
         spin_lock(&zdata->lock);
-
-        if (!list_empty(&zdata->vip_list)) {
-                rq = list_first_entry(&zdata->vip_list, struct request, queuelist);
-                list_del_init(&rq->queuelist);
-                goto done;
-        }
 
         if (zdata->sync_count >= ZEN_SYNC_BATCH && !list_empty(&zdata->async_list)) {
                 rq = list_first_entry(&zdata->async_list, struct request, queuelist);
@@ -80,7 +71,6 @@ static struct request *zen_dispatch_request(struct blk_mq_hw_ctx *hctx)
                 zdata->sync_count = 0;
         }
 
-done:
         spin_unlock(&zdata->lock);
         return rq;
 }
@@ -88,8 +78,7 @@ done:
 static bool zen_has_work(struct blk_mq_hw_ctx *hctx)
 {
         struct zen_hctx_data *zdata = hctx->sched_data;
-        return !list_empty_careful(&zdata->vip_list) || 
-               !list_empty_careful(&zdata->sync_list) || 
+        return !list_empty_careful(&zdata->sync_list) || 
                !list_empty_careful(&zdata->async_list);
 }
 
@@ -98,7 +87,6 @@ static int zen_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
         struct zen_hctx_data *zdata = kzalloc_node(sizeof(*zdata), GFP_KERNEL, hctx->numa_node);
         if (!zdata) return -ENOMEM;
 
-        INIT_LIST_HEAD(&zdata->vip_list);
         INIT_LIST_HEAD(&zdata->sync_list);
         INIT_LIST_HEAD(&zdata->async_list);
         zdata->sync_count = 0;
