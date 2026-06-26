@@ -43,4 +43,3 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	sg_policy->cached_raw_freq = freq;
 	return cpufreq_driver_resolve_freq(policy, freq);
 }
-.
