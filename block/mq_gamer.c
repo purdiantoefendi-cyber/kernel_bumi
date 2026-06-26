@@ -11,6 +11,10 @@
 #include <linux/spinlock.h>
 #include <linux/blk-mq.h>
 
+#include "blk.h"
+#include "blk-mq.h"
+#include "blk-mq-sched.h"
+
 #define GAMER_READ_QUANTUM 10
 #define GAMER_WRITE_QUANTUM 2
 
@@ -25,29 +29,26 @@ struct gamer_hctx_data {
 };
 
 static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx,
-                                  struct list_head *list, bool at_head)
+                                  struct list_head *rq_list, bool at_head)
 {
         struct gamer_hctx_data *ghd = hctx->sched_data;
         struct request *rq, *next;
 
         spin_lock(&ghd->lock);
-
-        /* PENYELAMAT SILENT FREEZE: list_splice_init! */
-        if (at_head) {
-                list_splice_init(list, &ghd->vip_list);
-        } else {
-                list_for_each_entry_safe(rq, next, list, queuelist) {
-                        list_del_init(&rq->queuelist);
-
-                        if (blk_rq_is_passthrough(rq) || op_is_flush(rq->cmd_flags))
-                                list_add_tail(&rq->queuelist, &ghd->vip_list);
-                        else if (rq_data_dir(rq) == READ)
-                                list_add_tail(&rq->queuelist, &ghd->read_list);
+        
+        list_for_each_entry_safe(rq, next, rq_list, queuelist) {
+                if (at_head) {
+                        list_move(&rq->queuelist, &ghd->vip_list);
+                } else {
+                        if (rq_data_dir(rq) == READ)
+                                list_move_tail(&rq->queuelist, &ghd->read_list);
                         else
-                                list_add_tail(&rq->queuelist, &ghd->write_list);
+                                list_move_tail(&rq->queuelist, &ghd->write_list);
                 }
+                
+                blk_mq_sched_request_inserted(rq);
         }
-
+        
         spin_unlock(&ghd->lock);
 }
 
