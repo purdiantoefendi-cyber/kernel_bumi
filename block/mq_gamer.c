@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Gamer I/O Scheduler - Kyber Architecture Base
- * No Freeze Ultimate Edition
+ * Swapped: Now configured for Brutal Performance & Gaming Load
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -17,14 +17,14 @@
 #include "blk-stat.h"
 
 enum { GAMER_READ, GAMER_SYNC_WRITE, GAMER_OTHER, GAMER_NUM_DOMAINS };
-enum { GAMER_MIN_DEPTH = 256, GAMER_ASYNC_PERCENT = 75 };
+enum { GAMER_MIN_DEPTH = 512, GAMER_ASYNC_PERCENT = 75 }; /* Kedalaman maksimum 512 */
 
 static const unsigned int gamer_depth[] = {
-	[GAMER_READ] = 256, [GAMER_SYNC_WRITE] = 128, [GAMER_OTHER] = 64,
+	[GAMER_READ] = 512, [GAMER_SYNC_WRITE] = 128, [GAMER_OTHER] = 64,
 };
 
 static const unsigned int gamer_batch_size[] = {
-	[GAMER_READ] = 10, [GAMER_SYNC_WRITE] = 2, [GAMER_OTHER] = 2,
+	[GAMER_READ] = 100, [GAMER_SYNC_WRITE] = 10, [GAMER_OTHER] = 10, /* Super agresif (rasio 100:10) */
 };
 
 struct gamer_ctx_queue {
