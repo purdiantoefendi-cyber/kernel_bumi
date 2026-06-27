@@ -10,7 +10,7 @@
 #define FREQ_AWAKE_MIN 1295000 /* Anti-stutter UI Earth Kernel */
 
 extern bool sugov_suspended; 
-extern unsigned int mtk_map_util_freq(int cpu, unsigned long util);
+/* HAPUS baris extern mtk_map_util_freq karena sudah ada di cpufreq.h */
 
 static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 				  unsigned long util, unsigned long max)
@@ -38,23 +38,22 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 
 	/* --- MODE AKTIF: SAAT LAYAR MENYALA --- */
 	if (load_pct >= 60) {
-		/* BEBAN >= 60%: Langsung Rata Kanan (Max Performance) */
+		/* BEBAN 60% KE ATAS: Rata Kanan (Max Performance) */
 		freq = policy->max;
 	} 
 	else if (load_pct < 30) {
-		/* BEBAN < 30%: Terjun Bebas (Langsung drop ke batas bawah tanpa rem) */
+		/* BEBAN DI BAWAH 30%: Terjun Bebas (Lock Min Freq) */
 		freq = policy->min;
 	} 
 	else {
 		/* BEBAN 30% - 59%: Zona MTK Smoothness & Rem ABS */
-		unsigned int target_freq = mtk_map_util_freq(cpu, util);
+		unsigned long target_freq = mtk_map_util_freq(cpu, util);
 		
-		/* Jika frekuensi saat ini jauh lebih tinggi dari target (contoh: turun dari 100%),
-		 * aplikasikan Rem ABS (turun perlahan 167MHz) agar tidak stuttering. */
+		/* Jika frekuensi saat ini masih tinggi, turun perlahan (Rem ABS) */
 		if (freq > target_freq + FREQ_STEP_DOWN) {
 			freq -= FREQ_STEP_DOWN;
 		} else {
-			/* Jika sudah dekat atau di bawah target, langsung ikuti target util */
+			/* Jika sudah dekat target, ikuti util mtk */
 			freq = target_freq;
 		}
 	}
