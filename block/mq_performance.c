@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Performance I/O Scheduler - Kyber Architecture Base
- * No Freeze Ultimate Edition
+ * Swapped: Now configured for Smooth & Stable Daily Use
  */
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -17,14 +17,14 @@
 #include "blk-stat.h"
 
 enum { PERF_READ, PERF_SYNC_WRITE, PERF_OTHER, PERF_NUM_DOMAINS };
-enum { PERF_MIN_DEPTH = 512, PERF_ASYNC_PERCENT = 75 };
+enum { PERF_MIN_DEPTH = 256, PERF_ASYNC_PERCENT = 75 }; /* Kedalaman diubah menjadi 256 */
 
 static const unsigned int perf_depth[] = {
-	[PERF_READ] = 512, [PERF_SYNC_WRITE] = 128, [PERF_OTHER] = 64,
+	[PERF_READ] = 256, [PERF_SYNC_WRITE] = 128, [PERF_OTHER] = 64,
 };
 
 static const unsigned int perf_batch_size[] = {
-	[PERF_READ] = 100, [PERF_SYNC_WRITE] = 10, [PERF_OTHER] = 10,
+	[PERF_READ] = 10, [PERF_SYNC_WRITE] = 2, [PERF_OTHER] = 2, /* Diturunkan menjadi rasio 10:2 */
 };
 
 struct perf_ctx_queue {
