@@ -1020,10 +1020,13 @@ static inline int may_follow_link(struct nameidata *nd)
         kuid_t puid;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (nd->inode && unlikely(nd->inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                return -ENOENT;
-        }
+	if (nd->inode && unlikely(nd->inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		return -ENOENT;
+	}
 #endif
+
+	if (!sysctl_protected_symlinks)
+		return 0;
 
         if (!sysctl_protected_symlinks)
                 return 0;
@@ -1103,10 +1106,14 @@ static int may_linkat(struct path *link)
         struct inode *inode = link->dentry->d_inode;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (link->dentry->d_inode && unlikely(link->dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                return -ENOENT;
-        }
+	if (link->dentry->d_inode && unlikely(link->dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		return -ENOENT;
+	}
 #endif
+
+	/* Inode writeback is not safe when the uid or gid are invalid. */
+	if (!uid_valid(inode->i_uid) || !gid_valid(inode->i_gid))
+		return -EOVERFLOW;
 
         /* Inode writeback is not safe when the uid or gid are invalid. */
         if (!uid_valid(inode->i_uid) || !gid_valid(inode->i_gid))
@@ -1150,10 +1157,17 @@ static int may_create_in_sticky(umode_t dir_mode, kuid_t dir_uid,
                                 struct inode * const inode)
 {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                return -ENOENT;
-        }
+	if (unlikely(inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		return -ENOENT;
+	}
 #endif
+
+	if ((!sysctl_protected_fifos && S_ISFIFO(inode->i_mode)) ||
+	    (!sysctl_protected_regular && S_ISREG(inode->i_mode)) ||
+	    likely(!(dir_mode & S_ISVTX)) ||
+	    uid_eq(inode->i_uid, dir_uid) ||
+	    uid_eq(current_fsuid(), inode->i_uid))
+		return 0;
 
         if ((!sysctl_protected_fifos && S_ISFIFO(inode->i_mode)) ||
             (!sysctl_protected_regular && S_ISREG(inode->i_mode)) ||
@@ -1670,204 +1684,163 @@ static struct dentry *__lookup_hash(const struct qstr *name,
         if (dentry)
                 return dentry;
 
-        dentry = d_alloc(base, name);
+	if (dentry)
+		return dentry;
+
+	/* Don't create child dentry for a dead directory. */
+	if (unlikely(IS_DEADDIR(dir)))
+		return ERR_PTR(-ENOENT);
+
+	dentry = d_alloc(base, name);
+	if (unlikely(!dentry))
+		return ERR_PTR(-ENOMEM);
+
+	old = dir->i_op->lookup(dir, dentry, flags);
+	if (unlikely(old)) {
+		dput(dentry);
+		dentry = old;
+	}
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-retry:
+	if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		dput(dentry);
+		return ERR_PTR(-ENOENT);
+	}
 #endif
-        if (unlikely(!dentry))
-                return ERR_PTR(-ENOMEM);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (unlikely(dentry) && !IS_ERR(dentry) && dentry->d_inode && !found_sus_path && susfs_is_inode_sus_path(dentry->d_inode)) {
-                if (d_in_lookup(dentry))
-                        d_lookup_done(dentry);
-                if (!(flags & LOOKUP_RCU))
-                        dput(dentry);
-                dentry = d_alloc(base, &susfs_fake_qstr_name);
-                found_sus_path = true;
-                goto retry;
-        }
-#endif
-	{
-		struct dentry *old;
-		old = base->d_inode->i_op->lookup(base->d_inode, dentry, flags);
+	return dentry;
+}
+
+static int lookup_fast(struct nameidata *nd,
+		       struct path *path, struct inode **inode,
+		       unsigned *seqp)
+{
+	struct vfsmount *mnt = nd->path.mnt;
+	struct dentry *dentry, *parent = nd->path.dentry;
+	int status = 1;
+	int err;
+
+	/*
+	 * Rename seqlock is not required here because in the off chance
+	 * of a false negative due to a concurrent rename, the caller is
+	 * going to fall back to non-racy lookup.
+	 */
+	if (nd->flags & LOOKUP_RCU) {
+		unsigned seq;
+		bool negative;
+		dentry = __d_lookup_rcu(parent, &nd->last, &seq);
+		if (unlikely(!dentry)) {
+			if (unlazy_walk(nd))
+				return -ECHILD;
+			return 0;
+		}
+
+		/*
+		 * This sequence count validates that the inode matches
+		 * the dentry name information from lookup.
+		 */
+		*inode = d_backing_inode(dentry);
+		negative = d_is_negative(dentry);
+		if (unlikely(read_seqcount_retry(&dentry->d_seq, seq)))
+			return -ECHILD;
+
+		/*
+		 * This sequence count validates that the parent had no
+		 * changes while we did the lookup of the dentry above.
+		 *
+		 * The memory barrier in read_seqcount_begin of child is
+		 *  enough, we can use __read_seqcount_retry here.
+		 */
+		if (unlikely(__read_seqcount_retry(&parent->d_seq, nd->seq)))
+			return -ECHILD;
+
+		*seqp = seq;
+		status = d_revalidate(dentry, nd->flags);
+		if (likely(status > 0)) {
+			/*
+			 * Note: do negative dentry check after revalidation in
+			 * case that drops it.
+			 */
+			if (unlikely(negative))
+				return -ENOENT;
+			path->mnt = mnt;
+			path->dentry = dentry;
+			if (likely(__follow_mount_rcu(nd, path, inode, seqp)))
+				return 1;
+		}
+		if (unlazy_child(nd, dentry, seq))
+			return -ECHILD;
+		if (unlikely(status == -ECHILD))
+			/* we'd been told to redo it in non-rcu mode */
+			status = d_revalidate(dentry, nd->flags);
+	} else {
+		dentry = __d_lookup(parent, &nd->last);
+		if (unlikely(!dentry))
+			return 0;
+		status = d_revalidate(dentry, nd->flags);
+	}
+	if (unlikely(status <= 0)) {
+		if (!status)
+			d_invalidate(dentry);
+		dput(dentry);
+		return status;
+	}
+	if (unlikely(d_is_negative(dentry))) {
+		dput(dentry);
+		return -ENOENT;
+	}
+
+	path->mnt = mnt;
+	path->dentry = dentry;
+	err = follow_managed(path, nd);
+	if (likely(err > 0))
+		*inode = d_backing_inode(path->dentry);
+	return err;
+}
+
+/* Fast lookup failed, do it the slow way */
+static struct dentry *__lookup_slow(const struct qstr *name,
+				    struct dentry *dir,
+				    unsigned int flags)
+{
+	struct dentry *dentry, *old;
+	struct inode *inode = dir->d_inode;
+	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+
+	/* Don't go there if it's already dead */
+	if (unlikely(IS_DEADDIR(inode)))
+		return ERR_PTR(-ENOENT);
+again:
+	dentry = d_alloc_parallel(dir, name, &wq);
+	if (IS_ERR(dentry))
+		return dentry;
+	if (unlikely(!d_in_lookup(dentry))) {
+		if (!(flags & LOOKUP_NO_REVAL)) {
+			int error = d_revalidate(dentry, flags);
+			if (unlikely(error <= 0)) {
+				if (!error) {
+					d_invalidate(dentry);
+					dput(dentry);
+					goto again;
+				}
+				dput(dentry);
+				dentry = ERR_PTR(error);
+			}
+		}
+	} else {
+		old = inode->i_op->lookup(inode, dentry, flags);
+		d_lookup_done(dentry);
 		if (unlikely(old)) {
 			dput(dentry);
 			dentry = old;
 		}
 		return dentry;
 	}
-}
-
-static int lookup_fast(struct nameidata *nd,
-                       struct path *path, struct inode **inode,
-                       unsigned *seqp)
-{
-        struct vfsmount *mnt = nd->path.mnt;
-        struct dentry *dentry, *parent = nd->path.dentry;
-        int status = 1;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        bool is_nd_state_lookup_last_and_open_last = (nd->state & (ND_STATE_LOOKUP_LAST | ND_STATE_OPEN_LAST));
+	if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		dput(dentry);
+		return ERR_PTR(-ENOENT);
+	}
 #endif
-        int err;
-
-        /*
-         * Rename seqlock is not required here because in the off chance
-         * of a false negative due to a concurrent rename, the caller is
-         * going to fall back to non-racy lookup.
-         */
-        if (nd->flags & LOOKUP_RCU) {
-                unsigned seq;
-                bool negative;
-                dentry = __d_lookup_rcu(parent, &nd->last, &seq);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                if (is_nd_state_lookup_last_and_open_last && dentry && !IS_ERR(dentry) && dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode)) {
-                                if (d_in_lookup(dentry))
-                                        d_lookup_done(dentry);
-                                // no dput() here, __d_lookup_rcu() does not take the dentry->d_lockref.count
-                                dentry = NULL;
-                }
-#endif
-                if (unlikely(!dentry)) {
-                        if (unlazy_walk(nd))
-                                return -ECHILD;
-                        return 0;
-                }
-
-                /*
-                 * This sequence count validates that the inode matches
-                 * the dentry name information from lookup.
-                 */
-                *inode = d_backing_inode(dentry);
-                negative = d_is_negative(dentry);
-                if (unlikely(read_seqcount_retry(&dentry->d_seq, seq)))
-                        return -ECHILD;
-
-                /*
-                 * This sequence count validates that the parent had no
-                 * changes while we did the lookup of the dentry above.
-                 *
-                 * The memory barrier in read_seqcount_begin of child is
-                 *  enough, we can use __read_seqcount_retry here.
-                 */
-                if (unlikely(__read_seqcount_retry(&parent->d_seq, nd->seq)))
-                        return -ECHILD;
-
-                *seqp = seq;
-                status = d_revalidate(dentry, nd->flags);
-                if (likely(status > 0)) {
-                        /*
-                         * Note: do negative dentry check after revalidation in
-                         * case that drops it.
-                         */
-                        if (unlikely(negative))
-                                return -ENOENT;
-                        path->mnt = mnt;
-                        path->dentry = dentry;
-                        if (likely(__follow_mount_rcu(nd, path, inode, seqp)))
-                                return 1;
-                }
-                if (unlazy_child(nd, dentry, seq))
-                        return -ECHILD;
-                if (unlikely(status == -ECHILD))
-                        /* we'd been told to redo it in non-rcu mode */
-                        status = d_revalidate(dentry, nd->flags);
-        } else {
-                dentry = __d_lookup(parent, &nd->last);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                if (is_nd_state_lookup_last_and_open_last && dentry && !IS_ERR(dentry) && dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode)) {
-                                if (d_in_lookup(dentry))
-                                        d_lookup_done(dentry);
-                                dput(dentry);
-                                dentry = NULL;
-                }
-#endif
-                if (unlikely(!dentry))
-                        return 0;
-                status = d_revalidate(dentry, nd->flags);
-        }
-        if (unlikely(status <= 0)) {
-                if (!status)
-                        d_invalidate(dentry);
-                dput(dentry);
-                return status;
-        }
-        if (unlikely(d_is_negative(dentry))) {
-                dput(dentry);
-                return -ENOENT;
-        }
-
-        path->mnt = mnt;
-        path->dentry = dentry;
-        err = follow_managed(path, nd);
-        if (likely(err > 0))
-                *inode = d_backing_inode(path->dentry);
-        return err;
-}
-
-/* Fast lookup failed, do it the slow way */
-static struct dentry *__lookup_slow(const struct qstr *name,
-                                    struct dentry *dir,
-                                    unsigned int flags)
-{
-        struct dentry *dentry, *old;
-        struct inode *inode = dir->d_inode;
-        DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        bool found_sus_path = false;
-        bool is_nd_flags_lookup_last = (flags & ND_FLAGS_LOOKUP_LAST);
-#endif
-
-        /* Don't go there if it's already dead */
-        if (unlikely(IS_DEADDIR(inode)))
-                return ERR_PTR(-ENOENT);
-again:
-        dentry = d_alloc_parallel(dir, name, &wq);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-retry:
-#endif
-        if (IS_ERR(dentry))
-                return dentry;
-        if (unlikely(!d_in_lookup(dentry))) {
-                if (!(flags & LOOKUP_NO_REVAL)) {
-                        int error = d_revalidate(dentry, flags);
-                        if (unlikely(error <= 0)) {
-                                if (!error) {
-                                        d_invalidate(dentry);
-                                        dput(dentry);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                                if (found_sus_path) {
-                                        dentry = d_alloc_parallel(dir, &susfs_fake_qstr_name, &wq);
-                                        goto retry;
-                                }
-#endif
-                                        goto again;
-                                }
-                                dput(dentry);
-                                dentry = ERR_PTR(error);
-                        }
-                }
-        } else {
-                old = inode->i_op->lookup(inode, dentry, flags);
-                d_lookup_done(dentry);
-                if (unlikely(old)) {
-                        dput(dentry);
-                        dentry = old;
-                }
-        }
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (is_nd_flags_lookup_last && !found_sus_path && dentry && !IS_ERR(dentry) && dentry->d_inode &&
-                susfs_is_inode_sus_path(dentry->d_inode))
-        {
-                if (d_in_lookup(dentry))
-                        d_lookup_done(dentry);
-                if (!(flags & LOOKUP_RCU))
-                        dput(dentry);
-                dentry = d_alloc_parallel(dir, &susfs_fake_qstr_name, &wq);
-                found_sus_path = true;
-                goto retry;
-        }
-#endif
-        return dentry;
+	return dentry;
 }
 
 static struct dentry *lookup_slow(const struct qstr *name,
@@ -2355,26 +2328,32 @@ OK:
                 if (err) {
                         const char *s = get_link(nd);
 
-                        if (IS_ERR(s))
-                                return PTR_ERR(s);
-                        err = 0;
-                        if (unlikely(!s)) {
-                                /* jumped */
-                                put_link(nd);
-                        } else {
-                                nd->stack[nd->depth - 1].name = name;
-                                name = s;
-                                continue;
-                        }
-                }
-                if (unlikely(!d_can_lookup(nd->path.dentry))) {
-                        if (nd->flags & LOOKUP_RCU) {
-                                if (unlazy_walk(nd))
-                                        return -ECHILD;
-                        }
-                        return -ENOTDIR;
-                }
-        }
+			if (IS_ERR(s))
+				return PTR_ERR(s);
+			err = 0;
+			if (unlikely(!s)) {
+				/* jumped */
+				put_link(nd);
+			} else {
+				nd->stack[nd->depth - 1].name = name;
+				name = s;
+				continue;
+			}
+		}
+		if (unlikely(!d_can_lookup(nd->path.dentry))) {
+			if (nd->flags & LOOKUP_RCU) {
+				if (unlazy_walk(nd))
+					return -ECHILD;
+			}
+			return -ENOTDIR;
+		}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		// we deal with sus sub path here
+		if (nd->inode && unlikely(nd->inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			return 0;
+		}
+#endif
+	}
 }
 
 /* must be paired with terminate_walk() */
@@ -2563,17 +2542,17 @@ int filename_lookup(int dfd, struct filename *name, unsigned flags,
         if (unlikely(retval == -ESTALE))
                 retval = path_lookupat(&nd, flags | LOOKUP_REVAL, path);
 
-        if (likely(!retval))
-                audit_inode(name, path->dentry, flags & LOOKUP_PARENT);
-        restore_nameidata();
+	if (likely(!retval))
+		audit_inode(name, path->dentry, flags & LOOKUP_PARENT);
+	restore_nameidata();
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (!retval && path->dentry->d_inode && unlikely(path->dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                putname(name);
-                return -ENOENT;
-        }
+	if (!retval && path->dentry->d_inode && unlikely(path->dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		putname(name);
+		return -ENOENT;
+	}
 #endif
-        putname(name);
-        return retval;
+	putname(name);
+	return retval;
 }
 
 /* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
@@ -3048,15 +3027,15 @@ static int may_delete(struct vfsmount *mnt, struct inode *dir, struct dentry *vi
 
         audit_inode_child(dir, victim, AUDIT_TYPE_CHILD_DELETE);
 
-        error = inode_permission2(mnt, dir, MAY_WRITE | MAY_EXEC);
-        if (error)
-                return error;
-        if (IS_APPEND(dir))
-                return -EPERM;
+	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
+	if (error)
+		return error;
+	if (IS_APPEND(dir))
+		return -EPERM;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                return -ENOENT;
-        }
+	if (unlikely(inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		return -ENOENT;
+	}
 #endif
 
         if (check_sticky(dir, inode) || IS_APPEND(inode) ||
@@ -3088,28 +3067,28 @@ static int may_delete(struct vfsmount *mnt, struct inode *dir, struct dentry *vi
 static inline int may_create(struct vfsmount *mnt, struct inode *dir, struct dentry *child)
 {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        int error;
+	int error;
 #endif
-        struct user_namespace *s_user_ns;
-        audit_inode_child(dir, child, AUDIT_TYPE_CHILD_CREATE);
+	struct user_namespace *s_user_ns;
+	audit_inode_child(dir, child, AUDIT_TYPE_CHILD_CREATE);
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (child->d_inode && unlikely(child->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
-                if (error) {
-                        return error;
-                }
-                return -ENOENT;
-        }
+	if (child->d_inode && unlikely(child->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
+		if (error) {
+			return error;
+		}
+		return -ENOENT;
+	}
 #endif
-        if (child->d_inode)
-                return -EEXIST;
-        if (IS_DEADDIR(dir))
-                return -ENOENT;
-        s_user_ns = dir->i_sb->s_user_ns;
-        if (!kuid_has_mapping(s_user_ns, current_fsuid()) ||
-            !kgid_has_mapping(s_user_ns, current_fsgid()))
-                return -EOVERFLOW;
-        return inode_permission2(mnt, dir, MAY_WRITE | MAY_EXEC);
+	if (child->d_inode)
+		return -EEXIST;
+	if (IS_DEADDIR(dir))
+		return -ENOENT;
+	s_user_ns = dir->i_sb->s_user_ns;
+	if (!kuid_has_mapping(s_user_ns, current_fsuid()) ||
+	    !kgid_has_mapping(s_user_ns, current_fsgid()))
+		return -EOVERFLOW;
+	return inode_permission(dir, MAY_WRITE | MAY_EXEC);
 }
 
 /*
@@ -3231,10 +3210,28 @@ static int may_open(const struct path *path, int acc_mode, int flag)
                 return -ENOENT;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        if (unlikely(inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                return -ENOENT;
-        }
+	if (unlikely(inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		return -ENOENT;
+	}
 #endif
+
+	switch (inode->i_mode & S_IFMT) {
+	case S_IFLNK:
+		return -ELOOP;
+	case S_IFDIR:
+		if (acc_mode & MAY_WRITE)
+			return -EISDIR;
+		break;
+	case S_IFBLK:
+	case S_IFCHR:
+		if (!may_open_dev(path))
+			return -EACCES;
+		/*FALLTHRU*/
+	case S_IFIFO:
+	case S_IFSOCK:
+		flag &= ~O_TRUNC;
+		break;
+	}
 
         switch (inode->i_mode & S_IFMT) {
         case S_IFLNK:
@@ -3306,9 +3303,23 @@ static inline int open_to_namei_flags(int flag)
 
 static int may_o_create(const struct path *dir, struct dentry *dentry, umode_t mode)
 {
-        struct user_namespace *s_user_ns;
+	struct user_namespace *s_user_ns;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        int error;
+	int error;
+
+	if (dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+		error = inode_permission(dir->dentry->d_inode, MAY_WRITE | MAY_EXEC);
+		if (error) {
+			return error;
+		}
+		return -ENOENT;
+	}
+	error = security_path_mknod(dir, dentry, mode, 0);
+#else
+	int error = security_path_mknod(dir, dentry, mode, 0);
+#endif
+	if (error)
+		return error;
 
         if (dentry->d_inode && unlikely(dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
                 error = inode_permission(dir->dentry->d_inode, MAY_WRITE | MAY_EXEC);
@@ -3471,25 +3482,25 @@ skip_orig_flow:
                 if (d_in_lookup(dentry))
                         break;
 
-                error = d_revalidate(dentry, nd->flags);
-                if (likely(error > 0))
-                        break;
-                if (error)
-                        goto out_dput;
-                d_invalidate(dentry);
-                dput(dentry);
-                dentry = NULL;
-        }
-        if (dentry->d_inode) {
-                /* Cached positive dentry: will open in f_op->open */
+		error = d_revalidate(dentry, nd->flags);
+		if (likely(error > 0))
+			break;
+		if (error)
+			goto out_dput;
+		d_invalidate(dentry);
+		dput(dentry);
+		dentry = NULL;
+	}
+	if (dentry->d_inode) {
+		/* Cached positive dentry: will open in f_op->open */
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                if (unlikely(dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                        dput(dentry);
-                        return -ENOENT;
-                }
+		if (unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			dput(dentry);
+			return -ENOENT;
+		}
 #endif
-                goto out_no_open;
-        }
+		goto out_no_open;
+	}
 
         /*
          * Checking write permission is tricky, bacuse we don't know if we are
@@ -3526,44 +3537,44 @@ skip_orig_flow:
                 goto no_open;
         }
 
-        if (dir_inode->i_op->atomic_open) {
-                error = atomic_open(nd, dentry, path, file, op, open_flag,
-                                    mode);
-                if (unlikely(error == -ENOENT) && create_error)
-                        error = create_error;
+	if (dir_inode->i_op->atomic_open) {
+		error = atomic_open(nd, dentry, path, file, op, open_flag,
+				    mode);
+		if (unlikely(error == -ENOENT) && create_error)
+			error = create_error;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                        if (create_error) {
-                                dput(dentry);
-                                return create_error;
-                        }
-                        dput(dentry);
-                        return -ENOENT;
-                }
+		if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+			if (create_error) {
+				dput(dentry);
+				return create_error;
+			}
+			dput(dentry);
+			return -ENOENT;
+		}
 #endif
-                return error;
-        }
+		return error;
+	}
 
 no_open:
-        if (d_in_lookup(dentry)) {
-                struct dentry *res = dir_inode->i_op->lookup(dir_inode, dentry,
-                                                             nd->flags);
-                d_lookup_done(dentry);
-                if (unlikely(res)) {
-                        if (IS_ERR(res)) {
-                                error = PTR_ERR(res);
-                                goto out_dput;
-                        }
-                        dput(dentry);
-                        dentry = res;
+	if (d_in_lookup(dentry)) {
+		struct dentry *res = dir_inode->i_op->lookup(dir_inode, dentry,
+							     nd->flags);
+		d_lookup_done(dentry);
+		if (unlikely(res)) {
+			if (IS_ERR(res)) {
+				error = PTR_ERR(res);
+				goto out_dput;
+			}
+			dput(dentry);
+			dentry = res;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-                        if (dentry->d_inode && unlikely(dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
-                                dput(dentry);
-                                return -ENOENT;
-                        }
+			if (dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+				dput(dentry);
+				return -ENOENT;
+			}
 #endif
-                }
-        }
+		}
+	}
 
         /* Negative dentry, just create the file */
         if (!dentry->d_inode && (open_flag & O_CREAT)) {
@@ -3904,21 +3915,47 @@ static struct file *path_openat(struct nameidata *nd,
         return ERR_PTR(error);
 }
 
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+extern struct filename* susfs_get_redirected_path(unsigned long ino);
+#endif
+
 struct file *do_filp_open(int dfd, struct filename *pathname,
                 const struct open_flags *op)
 {
-        struct nameidata nd;
-        int flags = op->lookup_flags;
-        struct file *filp;
+	struct nameidata nd;
+	int flags = op->lookup_flags;
+	struct file *filp;
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	struct filename *fake_pathname;
+#endif
 
-        set_nameidata(&nd, dfd, pathname);
-        filp = path_openat(&nd, op, flags | LOOKUP_RCU);
-        if (unlikely(filp == ERR_PTR(-ECHILD)))
-                filp = path_openat(&nd, op, flags);
-        if (unlikely(filp == ERR_PTR(-ESTALE)))
-                filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
-        restore_nameidata();
-        return filp;
+	set_nameidata(&nd, dfd, pathname);
+	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
+	if (unlikely(filp == ERR_PTR(-ECHILD)))
+		filp = path_openat(&nd, op, flags);
+	if (unlikely(filp == ERR_PTR(-ESTALE)))
+		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	if (!IS_ERR(filp) && unlikely(filp->f_inode->i_state & INODE_STATE_OPEN_REDIRECT) && current_uid().val < 2000) {
+		fake_pathname = susfs_get_redirected_path(filp->f_inode->i_ino);
+		if (!IS_ERR(fake_pathname)) {
+			restore_nameidata();
+			filp_close(filp, NULL);
+			// no need to do `putname(pathname);` here as it will be done by calling process
+			set_nameidata(&nd, dfd, fake_pathname);
+			filp = path_openat(&nd, op, flags | LOOKUP_RCU);
+			if (unlikely(filp == ERR_PTR(-ECHILD)))
+				filp = path_openat(&nd, op, flags);
+			if (unlikely(filp == ERR_PTR(-ESTALE)))
+				filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
+			restore_nameidata();
+			putname(fake_pathname);
+			return filp;
+		}
+	}
+#endif
+	restore_nameidata();
+	return filp;
 }
 
 struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,

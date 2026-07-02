@@ -105,25 +105,20 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	inode = igrab(fsnotify_conn_inode(mark->connector));
 	if (inode) {
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-		mnt = real_mount(file->f_path.mnt);
-		if (likely(susfs_is_current_proc_umounted()) &&
-					mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
-		{
+		if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+				unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
 			struct path path;
 			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
 			char *dpath;
 			if (!pathname) {
-				goto orig_flow;
+				goto out_seq_printf;
 			}
 			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
 			if (!dpath) {
-				goto out_kfree;
+				goto out_free_pathname;
 			}
 			if (kern_path(dpath, 0, &path)) {
-				goto out_kfree;
-			}
-			if (!path.dentry->d_inode) {
-				goto out_path_put;
+				goto out_free_pathname;
 			}
 			seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
 			   inode_mark->wd, path.dentry->d_inode->i_ino, path.dentry->d_inode->i_sb->s_dev,
@@ -133,14 +128,11 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 			iput(inode);
 			path_put(&path);
 			kfree(pathname);
-			iput(inode);
 			return;
-out_path_put:
-			path_put(&path);
-out_kfree:
+out_free_pathname:
 			kfree(pathname);
 		}
-orig_flow:
+out_seq_printf:
 #endif
 		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
 			   inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
