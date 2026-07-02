@@ -4047,7 +4047,7 @@ const struct proc_ns_operations mntns_operations = {
 };
 
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-extern void susfs_try_umount_all(uid_t uid);
+extern void susfs_try_umount(uid_t uid);
 void susfs_run_try_umount_for_current_mnt_ns(void) {
 	struct mount *mnt;
 	struct mnt_namespace *mnt_ns;
@@ -4063,7 +4063,7 @@ void susfs_run_try_umount_for_current_mnt_ns(void) {
 	}
 	// Unlock the namespace
 	namespace_unlock();
-	susfs_try_umount_all(current_uid().val);
+	susfs_try_umount(current_uid().val);
 }
 #endif
 #ifdef CONFIG_KSU_SUSFS
