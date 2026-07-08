@@ -1146,6 +1146,12 @@ int rndis_rm_hdr(struct gether *port,
 		struct sk_buff          *skb2;
 		u32             msg_len, data_offset, data_len;
 
+	/* Need at least MessageType, MessageLength, DataOffset, DataLength */
+	if (skb->len < 16) {
+		dev_kfree_skb_any(skb);
+		return -EINVAL;
+	}
+
 	/* MessageType, MessageLength */
 		if (skb->len == 1) {
 			dev_kfree_skb_any(skb);
