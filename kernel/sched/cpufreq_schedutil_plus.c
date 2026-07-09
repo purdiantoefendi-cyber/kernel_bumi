@@ -6,6 +6,7 @@
 
 #define FREQ_STEP_DOWN 167000  /* Rem ABS ~167 MHz per tahap */
 
+/* Variabel ini otomatis dikontrol oleh ke-3 sensor (PM, FB, MTK DRM) di file utama */
 extern bool sugov_suspended; 
 
 static unsigned int get_next_freq(struct sugov_policy *sg_policy,
@@ -23,8 +24,8 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 
 	/* --- MODE STANDBY: SAAT LAYAR MATI --- */
 	if (unlikely(sugov_suspended)) {
-		/* LITTLE Cluster yang tersisa dipaksa berjalan pada kecepatan minimum mutlak */
-		freq = policy->min;
+		/* Terhubung dengan 3 sensor: Lock SEMUA Cluster ke kecepatan minimum absolut hardware */
+		freq = policy->cpuinfo.min_freq;
 		sg_policy->cached_raw_freq = freq;
 		return cpufreq_driver_resolve_freq(policy, freq);
 	}
