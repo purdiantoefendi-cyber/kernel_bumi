@@ -170,25 +170,6 @@ static struct notifier_block sugov_fb_notifier = {
         .notifier_call = sugov_fb_notify,
 };
 
-/* --------------------------------------------------------- */
-/* 3. SENSOR LAYAR MEDIATEK (DRM/DISP NOTIFIER)              */
-/* --------------------------------------------------------- */
-static int sugov_mtk_disp_notify(struct notifier_block *nb, unsigned long action, void *data)
-{
-        /* Di MediaTek, biasanya action '1' atau '2' berarti suspend/blank, 
-         * dan '0' berarti resume/unblank. */
-        if (action == 1 || action == 2) { 
-                trigger_hotplug_state(true); /* Minta matikan CPU instan */
-        } else if (action == 0) { 
-                trigger_hotplug_state(false); /* Minta nyalakan CPU instan */
-        }
-        return NOTIFY_OK;
-}
-
-static struct notifier_block sugov_mtk_disp_notifier = {
-        .notifier_call = sugov_mtk_disp_notify,
-};
-
 /************************ Governor internals ***********************/
 
 static bool sugov_should_update_freq(struct sugov_policy *sg_policy, u64 time)
@@ -1319,11 +1300,6 @@ static int __init sugov_register(void)
         
         /* 2. Daftarkan Sensor Layar (FB) */
         fb_register_client(&sugov_fb_notifier);
-
-        /* 3. Daftarkan Sensor Layar MediaTek (DRM/DISP) */
-        /* Catatan: Jika saat di-compile muncul error "undefined reference to mtk_disp_notifier_register", 
-           hapus atau beri komentar (//) pada baris di bawah ini. */
-        mtk_disp_notifier_register(&sugov_mtk_disp_notifier);
 
         return cpufreq_register_governor(&schedutil_gov);
 }
