@@ -1314,8 +1314,17 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 
 static int __init sugov_register(void)
 {
-        /* Daftarkan sensor layar Framebuffer */
-        fb_register_client(&sugov_fb_notifier); 
+        /* 1. Daftarkan Sensor Deep Sleep (PM) */
+        register_pm_notifier(&sugov_pm_notifier); 
+        
+        /* 2. Daftarkan Sensor Layar (FB) */
+        fb_register_client(&sugov_fb_notifier);
+
+        /* 3. Daftarkan Sensor Layar MediaTek (DRM/DISP) */
+        /* Catatan: Jika saat di-compile muncul error "undefined reference to mtk_disp_notifier_register", 
+           hapus atau beri komentar (//) pada baris di bawah ini. */
+        mtk_disp_notifier_register(&sugov_mtk_disp_notifier);
+
         return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
