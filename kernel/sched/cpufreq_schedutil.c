@@ -83,25 +83,22 @@ static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
 /* Sensor Status Layar/Sleep */
 bool sugov_suspended = false;
 
-/* PEKERJA HOTPLUG EKSTREM: Prioritas Instan */
+/* PEKERJA HOTPLUG EKSTREM: Rute Langsung */
 static void big_cluster_hotplug_work_fn(struct work_struct *work)
 {
         int cpu;
         
-        /* Kunci akses hardware agar tidak ditunda oleh proses Android lain */
         lock_device_hotplug();
         
         if (sugov_suspended) {
-                /* LAYAR MATI: Evakuasi semua task ke LITTLE seketika, lalu Putus Arus Big Cluster */
+                /* EKSEKUSI BUTA: Langsung tembak mati CPU 6 & 7 tanpa pengecekan online */
                 for (cpu = 6; cpu <= 7; cpu++) {
-                        if (cpu_online(cpu))
-                                cpu_down(cpu);
+                        cpu_down(cpu);
                 }
         } else {
-                /* LAYAR NYALA: Alirkan kembali arus ke Big Cluster */
+                /* EKSEKUSI BUTA: Langsung alirkan arus ke CPU 6 & 7 */
                 for (cpu = 6; cpu <= 7; cpu++) {
-                        if (!cpu_online(cpu))
-                                cpu_up(cpu);
+                        cpu_up(cpu);
                 }
         }
         
@@ -109,60 +106,29 @@ static void big_cluster_hotplug_work_fn(struct work_struct *work)
 }
 static DECLARE_WORK(big_cluster_hotplug_work, big_cluster_hotplug_work_fn);
 
-/* FUNGSI PENENGAH UNTUK MENCEGAH DOUBLE-TRIGGER DARI BANYAK SENSOR */
-static void trigger_hotplug_state(bool is_screen_off)
-{
-        /* Cek apakah status saat ini sudah sama dengan permintaan.
-         * Jika sudah dieksekusi oleh salah satu sensor, abaikan sensor yang datang belakangan. */
-        if (sugov_suspended == is_screen_off)
-                return;
-
-        /* Jika status berubah, baru eksekusi Hotplug */
-        sugov_suspended = is_screen_off;
-        queue_work(system_highpri_wq, &big_cluster_hotplug_work);
-}
-
 /* --------------------------------------------------------- */
-/* 1. SENSOR DEEP SLEEP (POWER MANAGEMENT)                   */
-/* --------------------------------------------------------- */
-static int sugov_pm_notify(struct notifier_block *nb, unsigned long action, void *ptr)
-{
-        switch (action) {
-        case PM_SUSPEND_PREPARE:
-                trigger_hotplug_state(true); /* Minta matikan CPU */
-                break;
-        case PM_POST_SUSPEND:
-                trigger_hotplug_state(false); /* Minta nyalakan CPU */
-                break;
-        }
-        return NOTIFY_OK;
-}
-
-static struct notifier_block sugov_pm_notifier = {
-        .notifier_call = sugov_pm_notify,
-};
-
-/* --------------------------------------------------------- */
-/* 2. SENSOR LAYAR (FRAMEBUFFER)                             */
+/* SENSOR LAYAR TUNGGAL (FRAMEBUFFER) - Tanpa Fungsi Penengah*/
 /* --------------------------------------------------------- */
 static int sugov_fb_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
         struct fb_event *event = data;
         int *blank;
 
-        if (action != FB_EVENT_BLANK)
-                return NOTIFY_DONE;
-
-        if (!event || !event->data)
+        if (action != FB_EVENT_BLANK || !event || !event->data)
                 return NOTIFY_DONE;
 
         blank = event->data;
 
         if (*blank == FB_BLANK_POWERDOWN) {
-                trigger_hotplug_state(true); /* Minta matikan CPU instan */
+                /* LAYAR MATI: Set logis dan langsung masukkan antrean VIP */
+                sugov_suspended = true;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
         } else if (*blank == FB_BLANK_UNBLANK) {
-                trigger_hotplug_state(false); /* Minta nyalakan CPU instan */
+                /* LAYAR NYALA: Set logis dan langsung bangunkan */
+                sugov_suspended = false;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
         }
+        
         return NOTIFY_OK;
 }
 
@@ -1295,12 +1261,8 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 
 static int __init sugov_register(void)
 {
-        /* 1. Daftarkan Sensor Deep Sleep (PM) */
-        register_pm_notifier(&sugov_pm_notifier); 
-        
-        /* 2. Daftarkan Sensor Layar (FB) */
-        fb_register_client(&sugov_fb_notifier);
-
+        /* Hanya daftarkan Framebuffer*/
+        fb_register_client(&sugov_fb_notifier); 
         return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
