@@ -189,7 +189,7 @@ static u64 workingset_protection_prev_totalram __read_mostly = 0;
 /*
  * From 0 .. 200.  Higher means more swappy.
  */
-int vm_swappiness = 60;
+int vm_swappiness = 200;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
