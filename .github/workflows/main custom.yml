@@ -1,107 +1,98 @@
-name: Build Kernel Custom
+Name: Build Kernel Custom
 
 on:
-  workflow_dispatch:
-    inputs:
-      runner:
-        description: 'Pilih Runner Environment'
-        required: true
-        default: 'ubuntu-latest'
-        type: choice
-        options:
-          - ubuntu-latest
-          - ubuntu-slim
-          - self-hosted
-      branch:
-        description: 'Branch'
-        required: true
-      defconfig:
-        description: 'Defconfig'
-        required: true
-        default: 'earth_defconfig'
-      kernelsu_url:
-        description: 'Custom KSU URL'
-        required: false
-        default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh'
-      kernelsu_branch:
-        description: 'KSU Branch'
-        required: false
-        default: 'v3.1.0-legacy-susfs'
-      use_susfs:
-        description: 'Gunakan SUSFS 2.0 (Cherry-pick dari KernelSU-Next)?'
-        required: true
-        type: boolean
-        default: false
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-slim
+          - self-hosted
+      branch:
+        description: 'Branch'
+        required: true
+      defconfig:
+        description: 'Defconfig'
+        required: true
+        default: 'earth_defconfig'
+      kernelsu_url:
+        description: 'Custom KSU URL'
+        required: false
+        default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh'
+      kernelsu_branch:
+        description: 'KSU Branch'
+        required: false
+        default: 'v3.1.0-legacy-susfs'
 
 jobs:
-  build:
-    runs-on: ${{ github.event.inputs.runner }}
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.branch }}
-        submodules: recursive
+  build:
+    runs-on: ${{ github.event.inputs.runner }}
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch }}
+        submodules: recursive
 
-    - name: Set Variables
-      run: |
-        # Menyimpan BUILD_TIME ke environment GitHub agar bisa dipakai di step Upload
-        echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
-        
-        # Menyimpan argumen compiler ke environment GitHub
-        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1" >> $GITHUB_ENV
+    - name: Set Variables
+      run: |
+        # Menyimpan BUILD_TIME ke environment GitHub agar bisa dipakai di step ZIP dan Upload
+        echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
+        
+        # Menyimpan argumen compiler ke environment GitHub
+        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1" >> $GITHUB_ENV
 
-    - name: Install Dependencies
-      run: |
-        export DEBIAN_FRONTEND=noninteractive
-        sudo apt-get update
-        sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
+    - name: Install Dependencies
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
 
-    - name: Setup AOSP Clang
-      run: |
-        mkdir clang
-        wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz | tar -xz -C clang
-        
-        # Menambahkan Clang ke PATH global runner
-        echo "$PWD/clang/bin" >> $GITHUB_PATH
+    - name: Setup AOSP Clang
+      run: |
+        mkdir clang
+        wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz | tar -xz -C clang
+        
+        # Menambahkan Clang ke PATH global runner
+        echo "$PWD/clang/bin" >> $GITHUB_PATH
 
-    - name: Setup KernelSU & SUSFS
-      run: |
-        curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s ${{ github.event.inputs.kernelsu_branch }}
-        
-        if [ "${{ github.event.inputs.use_susfs }}" == "true" ]; then
-          echo "Menerapkan implementasi SUSFS v2.0.0..."
-          cd KernelSU
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git fetch https://github.com/KernelSU-Next/KernelSU-Next.git ba4422f0556e10f40dda1887631d87a18ede4ec5
-          git cherry-pick FETCH_HEAD || {
-            echo "Terjadi konflik saat cherry-pick commit SUSFS!"
-            git cherry-pick --abort
-            exit 1
-          }
-          cd ..
-        fi
+    - name: Setup KernelSU
+      run: |
+        curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s ${{ github.event.inputs.kernelsu_branch }}
 
-    - name: Generate Defconfig
-      run: |
-        # $ARGS didapat dari step "Set Variables"
-        make O=out $ARGS ${{ github.event.inputs.defconfig }} | tee defconfig.log
+    - name: Generate Defconfig
+      run: |
+        # $ARGS didapat dari step "Set Variables"
+        make O=out $ARGS ${{ github.event.inputs.defconfig }} | tee defconfig.log
 
-    - name: Compile Kernel
-      run: |
-        # Proses compile dengan opsi fallback -j1 jika terjadi error
-        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
+    - name: Compile Kernel
+      run: |
+        # Proses compile dengan opsi fallback -j1 jika terjadi error
+        make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 $ARGS || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1 $ARGS | tee compile.log
 
-    - name: Upload Artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: Build-Result-${{ env.BUILD_TIME }}
-        path: |
-          *.log
-          out/arch/arm64/boot/Image.gz*
-          out/arch/arm64/boot/dts/**/*.dtb
-          out/arch/arm64/boot/dts/**/*.gz
-          out/arch/arm64/boot/dts/**/*.gz-dtb
-        retention-days: 7
+    - name: Package Kernel (ZIP)
+      run: |
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          ZIP_NAME="kernel build-${{ env.BUILD_TIME }}.zip"
+          zip -j "$ZIP_NAME" out/arch/arm64/boot/Image.gz-dtb 2>/dev/null || zip -j "$ZIP_NAME" out/arch/arm64/boot/Image.gz-dtb
+        else
+          echo "Error: Image.gz-dtb tidak ditemukan. Build mungkin gagal."
+          exit 1
+        fi
+
+    - name: Upload Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Result-${{ env.BUILD_TIME }}
+        path: |
+          *.log
+          out/arch/arm64/boot/Image.gz*
+          out/arch/arm64/boot/dts/**/*.dtb
+          out/arch/arm64/boot/dts/**/*.gz
+          out/arch/arm64/boot/dts/**/*.gz-dtb
+        retention-days: 7
