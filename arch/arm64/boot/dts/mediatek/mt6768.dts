@@ -65,7 +65,7 @@ cluster1_opp: opp_table1 {
 
 	opp0  { opp-hz = /bits/ 64 <3000000000>; opp-microvolt = <1200000>; };
 	opp1  { opp-hz = /bits/ 64 <2500000000>; opp-microvolt = <1097500>; };
-	opp1  { opp-hz = /bits/ 64 <2300000000>; opp-microvolt = <1036250>; };
+	opp2  { opp-hz = /bits/ 64 <2300000000>; opp-microvolt = <1036250>; };
 	opp3  { opp-hz = /bits/ 64 <2000000000>; opp-microvolt = <1060000>; };
 	opp4  { opp-hz = /bits/ 64 <1933000000>; opp-microvolt = <1051250>; };
 	opp5  { opp-hz = /bits/ 64 <1866000000>; opp-microvolt = <1000000>; };
