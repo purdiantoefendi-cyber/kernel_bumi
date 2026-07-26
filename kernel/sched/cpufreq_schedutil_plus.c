@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2019 MediaTek Inc.
- * Modified with Lagfree (75-35) & Extreme Soft-Disable by Gemini
+ * Modified with Lagfree (70-35) & Extreme Soft-Disable by Gemini
  */
 
 #define FREQ_STEP_DOWN 167000  /* Rem ABS ~167 MHz per tahap */
@@ -35,8 +35,8 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
         if (max > 0)
                 load_pct = (util * 100) / max;
 
-        if (load_pct >= 75) {
-                /* Threshold 75%: Titik seimbang performa, langsung gas pol ke Max Freq! */
+        if (load_pct >= 70) {
+                /* Threshold 70%: Titik seimbang performa, langsung gas pol ke Max Freq! */
                 freq = policy->max;
         } else if (load_pct <= 35) {
                 /* Threshold 35%: Beban ringan, lebih cepat drop ke Mode Hemat (Min Freq) */
