@@ -21,11 +21,17 @@ on:
       kernelsu_url:
         description: 'Custom KSU URL'
         required: false
-        default: 'https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh'
+        default: 'https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh'
       kernelsu_branch:
-        description: 'KSU Branch'
+        description: 'KSU Branch / Version'
         required: false
-        default: 'v3.1.0-legacy-susfs'
+        default: 'v.4.1.0'
+      ksu_custom_fix:
+        description: 'Script Perbaikan Custom untuk KSU (Gunakan perintah bash/sed)'
+        required: false
+        default: |
+          # Fix error MODULE_IMPORT_NS untuk kernel 4.19
+          sed -i 's/MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/\/\/ MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/g' drivers/kernelsu/ksu.c
 
 jobs:
   build:
@@ -57,6 +63,15 @@ jobs:
     - name: Setup KernelSU
       run: |
         curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
+
+    - name: Apply Custom KSU Fixes
+      run: |
+        # Menyimpan input custom fix ke dalam file bash sementara dan menjalankannya
+        # Ini mencegah error tanda kutip (quotes) pada GitHub Actions
+        echo "${{ github.event.inputs.ksu_custom_fix }}" > ksu_fix_script.sh
+        echo "Menjalankan script custom fix:"
+        cat ksu_fix_script.sh
+        bash ksu_fix_script.sh
 
     - name: Generate Defconfig
       run: |
