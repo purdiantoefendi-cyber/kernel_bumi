@@ -65,19 +65,19 @@ static void setup_groups(struct root_profile *profile, struct cred *cred)
 
 void disable_seccomp(void)
 {
-	assert_spin_locked(&current->sighand->siglock);
-	// disable seccomp
+        assert_spin_locked(&current->sighand->siglock);
+        // disable seccomp
 #if defined(CONFIG_GENERIC_ENTRY) &&                                           \
-	LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-	clear_syscall_work(SECCOMP);
+        LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+        clear_syscall_work(SECCOMP);
 #else
-	clear_thread_flag(TIF_SECCOMP);
+        clear_thread_flag(TIF_SECCOMP);
 #endif
 
 #ifdef CONFIG_SECCOMP
-	current->seccomp.mode = 0;
-	current->seccomp.filter = NULL;
-	atomic_set(&current->seccomp.filter_count, 0);
+        current->seccomp.mode = 0;
+        current->seccomp.filter = NULL;
+        //atomic_set(&current->seccomp.filter_count, 0);
 #else
 #endif
 }
@@ -152,7 +152,7 @@ void escape_with_root_profile(void)
 }
 
 void escape_to_root_for_init(void) {
-	setup_selinux(KERNEL_SU_CONTEXT);
+        setup_selinux(KERNEL_SU_CONTEXT);
 }
 
 #ifdef CONFIG_KSU_MANUAL_SU
