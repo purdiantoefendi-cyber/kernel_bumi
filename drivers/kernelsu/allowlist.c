@@ -9,6 +9,7 @@
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/sched/task.h>
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 #include <linux/compiler_types.h>
@@ -424,7 +425,8 @@ void persistent_allow_list()
         goto put_task;
     }
     cb->func = do_persistent_allow_list;
-    task_work_add(tsk, cb, TWA_RESUME);
+    task_work_add(tsk, cb, true);
+
 
 put_task:
     put_task_struct(tsk);
