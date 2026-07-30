@@ -8,6 +8,7 @@
 #include <linux/pid.h>
 #include <linux/slab.h>
 #include <linux/version.h>
+#include <linux/sched/task.h>
 
 #include "klog.h"
 #include "throne_comm.h"
@@ -121,7 +122,7 @@ bool ksu_throne_comm_load_state(void)
         goto put_task;
     }
     cb->func = do_load_throne_state;
-    task_work_add(tsk, cb, TWA_RESUME);
+    task_work_add(tsk, cb, true);
 
 put_task:
     put_task_struct(tsk);
@@ -145,7 +146,7 @@ void ksu_throne_comm_save_state(void)
         goto put_task;
     }
     cb->func = do_save_throne_state;
-    task_work_add(tsk, cb, TWA_RESUME);
+    task_work_add(tsk, cb, true);
 
 put_task:
     put_task_struct(tsk);
@@ -265,7 +266,7 @@ void ksu_uid_exit(void)
         goto put_task;
     }
     cb->func = do_save_throne_state;
-    task_work_add(tsk, cb, TWA_RESUME);
+    task_work_add(tsk, cb, true);
 
 put_task:
     put_task_struct(tsk);
