@@ -13,6 +13,7 @@
 #include <linux/mm.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
+#include <linux/sched/task.h>
 
 #include "klog.h"
 
@@ -98,26 +99,26 @@ static void sanitize_string(char *str, size_t len)
 {
     if (!str || len == 0)
         return;
-    
+
     size_t read_pos = 0, write_pos = 0;
-    
+
     while (read_pos < len && str[read_pos] != '\0') {
         char c = str[read_pos];
-        
+
         if (c == '\n' || c == '\r') {
             read_pos++;
             continue;
         }
-        
+
         if (c == ' ' && write_pos > 0 && str[write_pos - 1] == ' ') {
             read_pos++;
             continue;
         }
-        
+
         str[write_pos++] = c;
         read_pos++;
     }
-    
+
     str[write_pos] = '\0';
 }
 
@@ -222,7 +223,7 @@ static void sulog_schedule_task_work(void)
 
     cb->func = sulog_task_work_handler;
 
-    ret = task_work_add(tsk, cb, TWA_RESUME);
+    ret = task_work_add(tsk, cb, true);
     if (ret) {
         pr_err("sulog: failed to queue task work: %d\n", ret);
         kfree(cb);
@@ -267,7 +268,7 @@ void ksu_sulog_report_su_grant(uid_t uid, const char *comm, const char *method)
 
     get_timestamp(timestamp, sizeof(timestamp));
     ksu_get_cmdline(full_comm, comm, sizeof(full_comm));
-    
+
     sanitize_string(full_comm, sizeof(full_comm));
 
     snprintf(log_buf, sizeof(log_buf),
@@ -288,7 +289,7 @@ void ksu_sulog_report_su_attempt(uid_t uid, const char *comm, const char *target
 
     get_timestamp(timestamp, sizeof(timestamp));
     ksu_get_cmdline(full_comm, comm, sizeof(full_comm));
-    
+
     sanitize_string(full_comm, sizeof(full_comm));
 
     snprintf(log_buf, sizeof(log_buf),
@@ -310,7 +311,7 @@ void ksu_sulog_report_permission_check(uid_t uid, const char *comm, bool allowed
 
     get_timestamp(timestamp, sizeof(timestamp));
     ksu_get_cmdline(full_comm, comm, sizeof(full_comm));
-    
+
     sanitize_string(full_comm, sizeof(full_comm));
 
     snprintf(log_buf, sizeof(log_buf),
@@ -331,7 +332,7 @@ void ksu_sulog_report_manager_operation(const char *operation, uid_t manager_uid
 
     get_timestamp(timestamp, sizeof(timestamp));
     ksu_get_cmdline(full_comm, NULL, sizeof(full_comm));
-    
+
     sanitize_string(full_comm, sizeof(full_comm));
 
     snprintf(log_buf, sizeof(log_buf),
@@ -352,7 +353,7 @@ void ksu_sulog_report_syscall(uid_t uid, const char *comm, const char *syscall, 
 
     get_timestamp(timestamp, sizeof(timestamp));
     ksu_get_cmdline(full_comm, comm, sizeof(full_comm));
-    
+
     sanitize_string(full_comm, sizeof(full_comm));
 
     snprintf(log_buf, sizeof(log_buf),
