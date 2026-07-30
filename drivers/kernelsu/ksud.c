@@ -269,7 +269,7 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
         init_task = rcu_dereference(current->real_parent);
         // fallback for initial installation, ksud is not there
         if (init_task) {
-            task_work_add(init_task, &on_post_fs_data_cb, TWA_RESUME);
+            task_work_add(init_task, &on_post_fs_data_cb, true);
         }
         rcu_read_unlock();
 
