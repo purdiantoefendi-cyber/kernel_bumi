@@ -59,7 +59,7 @@ bool allowed_for_su(void)
 {
     bool is_allowed = is_manager() || ksu_is_allow_uid_for_current(current_uid().val);
 #if __SULOG_GATE
-	ksu_sulog_report_permission_check(current_uid().val, current->comm, is_allowed);
+        ksu_sulog_report_permission_check(current_uid().val, current->comm, is_allowed);
 #endif
     return is_allowed;
 }
@@ -67,7 +67,7 @@ bool allowed_for_su(void)
 static void init_uid_scanner(void)
 {
     ksu_throne_comm_load_state();
-    
+
     if (ksu_uid_scanner_enabled) {
         int ret = ksu_throne_comm_init();
         if (ret != 0) {
@@ -540,7 +540,7 @@ static int add_try_umount(void __user *arg)
             long len = strncpy_from_user(buf, (const char __user *)cmd.arg, 256);
             if (len <= 0)
                 return -EFAULT;    
-            
+
             buf[sizeof(buf) - 1] = '\0';
 
             new_entry = kzalloc(sizeof(*new_entry), GFP_KERNEL);
@@ -587,7 +587,7 @@ static int add_try_umount(void __user *arg)
             long len = strncpy_from_user(buf, (const char __user *)cmd.arg, sizeof(buf) - 1);
             if (len <= 0)
                 return -EFAULT;
-            
+
             buf[sizeof(buf) - 1] = '\0';
 
             down_write(&mount_list_lock);
@@ -600,7 +600,7 @@ static int add_try_umount(void __user *arg)
                 }
             }
             up_write(&mount_list_lock);
-            
+
             return 0;
         }
 
@@ -648,14 +648,14 @@ static int add_try_umount(void __user *arg)
             kfree(output_buf);
             return ret;
         }
-        
+
         default: {
             pr_err("cmd_add_try_umount: invalid operation %u\n", cmd.mode);
             return -EINVAL;
         }
 
     } // switch(cmd.mode)
-    
+
     return 0;
 }
 
@@ -706,7 +706,7 @@ static int do_get_hook_type(void __user *arg)
 static int do_enable_kpm(void __user *arg)
 {
     struct ksu_enable_kpm_cmd cmd;
-    
+
     cmd.enabled = IS_ENABLED(CONFIG_KPM);
 
     if (copy_to_user(arg, &cmd, sizeof(cmd))) {
@@ -938,7 +938,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
         tw->outp = (int __user *)*arg;
         tw->cb.func = ksu_install_fd_tw_func;
 
-        if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+        if (task_work_add(current, &tw->cb, true)) {
             kfree(tw);
             pr_warn("install fd add task_work failed\n");
         }
