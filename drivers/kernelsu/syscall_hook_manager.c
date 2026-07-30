@@ -20,6 +20,9 @@
 #include "selinux/selinux.h"
 #include "util.h"
 #include "ksud.h"
+#ifndef __NR_clone3
+#define __NR_clone3 -1
+#endif
 
 // Tracepoint registration count management
 // == 1: just us
