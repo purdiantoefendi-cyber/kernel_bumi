@@ -6,6 +6,7 @@
 #include <linux/slab.h>
 #include <linux/rculist.h>
 #include <linux/version.h>
+#include <linux/string.h> // Ditambahkan untuk fungsi strcmp
 #include "klog.h" // IWYU pragma: keep
 #include "ksu.h"
 #include "throne_tracker.h"
@@ -23,16 +24,23 @@ struct watch_dir {
 
 static struct fsnotify_group *g;
 
-static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
-                  struct inode *inode, struct inode *dir,
-                  const struct qstr *file_name, u32 cookie)
+// Diubah: Nama fungsi dan parameter disesuaikan dengan API Kernel 4.19
+static int ksu_handle_event(struct fsnotify_group *group,
+                            struct inode *inode,
+                            u32 mask,
+                            const void *data,
+                            int data_type,
+                            const unsigned char *file_name,
+                            u32 cookie,
+                            struct fsnotify_iter_info *iter_info)
 {
     if (!file_name)
         return 0;
     if (mask & FS_ISDIR)
         return 0;
-    if (file_name->len == 13 &&
-        !memcmp(file_name->name, "packages.list", 13)) {
+        
+    // Diubah: Memeriksa nama file menggunakan strcmp karena tipe data file_name adalah char*
+    if (!strcmp(file_name, "packages.list")) {
         pr_info("packages.list detected: %d\n", mask);
         if (ksu_uid_scanner_enabled) {
             ksu_request_userspace_scan();
@@ -42,8 +50,9 @@ static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
     return 0;
 }
 
+// Diubah: Menggunakan handle_event bukan handle_inode_event
 static const struct fsnotify_ops ksu_ops = {
-    .handle_inode_event = ksu_handle_inode_event,
+    .handle_event = ksu_handle_event,
 };
 
 static int add_mark_on_inode(struct inode *inode, u32 mask,
