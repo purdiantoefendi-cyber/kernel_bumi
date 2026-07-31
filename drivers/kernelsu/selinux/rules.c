@@ -16,8 +16,8 @@
 static struct policydb *get_policydb(void)
 {
     struct policydb *db;
-    struct selinux_policy *policy = selinux_state.policy;
-    db = &policy->policydb;
+    extern struct policydb policydb;
+db = &policydb;
     return db;
 }
 
