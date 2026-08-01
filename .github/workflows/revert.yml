@@ -1,0 +1,43 @@
+name: Revert Specific Commit
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        description: 'Commit hash (SHA) yang ingin di-revert'
+        required: true
+        type: string
+      branch:
+        description: 'Branch target (contoh: main)'
+        required: true
+        default: 'main'
+        type: string
+
+# Memberikan izin kepada GitHub Actions bot untuk melakukan push
+permissions:
+  contents: write 
+
+jobs:
+  revert-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 # Penting: Mengambil seluruh history agar git mengenali commit hash
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Revert Commit
+        run: |
+          echo "Reverting commit: ${{ inputs.commit_hash }}"
+          # Menggunakan --no-edit agar git tidak menunggu input pesan commit di terminal
+          git revert --no-edit ${{ inputs.commit_hash }}
+
+      - name: Push Changes
+        run: |
+          git push origin ${{ inputs.branch }}
