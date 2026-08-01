@@ -82,14 +82,49 @@ jobs:
           # 3. Mengubah input string commit menjadi array (dipisahkan oleh spasi)
           read -r -a COMMITS <<< "$COMMITS_INPUT"
 
-          # 4. Cherry-pick Loop
+          # Siapkan array untuk menampung log keberhasilan/kegagalan
+          SUCCESS_COMMITS=()
+          FAILED_COMMITS=()
+
+          # 4. Cherry-pick Loop dengan Error Handling
           for commit in "${COMMITS[@]}"; do
             if [ -n "$commit" ]; then
-              echo "Applying commit: $commit"
-              git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"
+              echo "----------------------------------------"
+              echo "Mencoba menerapkan commit: $commit"
+              
+              # Gunakan if untuk menangkap exit code dari git cherry-pick
+              if git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"; then
+                echo "✅ BERHASIL: Commit $commit berhasil diterapkan."
+                SUCCESS_COMMITS+=("$commit")
+              else
+                echo "❌ GAGAL/FATAL: Commit $commit gagal diterapkan."
+                FAILED_COMMITS+=("$commit")
+                
+                # Wajib melakukan abort agar tree kembali bersih untuk commit selanjutnya.
+                # '|| true' digunakan agar script tidak crash jika errornya bukan karena conflict (misal hash tidak ditemukan).
+                git cherry-pick --abort || true
+              fi
             fi
           done
 
-          # 5. Push ke branch target di origin (repo Anda sendiri)
-          echo "Pushing to origin/$TARGET_BRANCH..."
+          # 5. Cetak Laporan Eksekusi
+          echo "========================================"
+          echo "📊 LAPORAN HASIL CHERRY-PICK"
+          echo "========================================"
+          echo "✅ Total Berhasil: ${#SUCCESS_COMMITS[@]}"
+          for sc in "${SUCCESS_COMMITS[@]}"; do
+            echo "   - $sc"
+          done
+          
+          echo ""
+          echo "❌ Total Gagal: ${#FAILED_COMMITS[@]}"
+          for fc in "${FAILED_COMMITS[@]}"; do
+            echo "   - $fc"
+          done
+          echo "========================================"
+
+          # 6. Push ke branch target di origin (repo Anda sendiri)
+          # Opsional: Bisa menambahkan kondisi jika semua gagal tidak perlu push, 
+          # tapi saat ini script akan tetap push apa yang berhasil masuk.
+          echo "Mendorong perubahan ke origin/$TARGET_BRANCH..."
           git push origin "$TARGET_BRANCH" --force
