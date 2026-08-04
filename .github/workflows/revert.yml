@@ -1,37 +1,3 @@
-name: Revert Specific Commits
-
-on:
-  workflow_dispatch:
-    inputs:
-      commit_hashes:
-        description: 'Daftar Commit hash (SHA) yang ingin di-revert (pisahkan dengan spasi atau koma)'
-        required: true
-        type: string
-      branch:
-        description: 'Branch target (contoh: main)'
-        required: true
-        default: 'main'
-        type: string
-
-# Memberikan izin kepada GitHub Actions bot untuk melakukan push
-permissions:
-  contents: write 
-
-jobs:
-  revert-commits:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.branch }}
-          fetch-depth: 0 # Penting: Mengambil seluruh history agar git mengenali commit hash
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Revert Commits
         id: revert
         run: |
@@ -50,9 +16,15 @@ jobs:
               echo "✅ Berhasil revert $HASH"
               SUCCESS_LIST="$SUCCESS_LIST $HASH"
             else
-              # Jika revert gagal (misal: conflict), batalkan proses revert untuk hash ini
               echo "❌ Gagal revert $HASH. Melakukan abort untuk melanjutkan ke hash berikutnya."
-              git revert --abort
+              
+              # Tambahkan || true agar script tidak crash jika tidak ada revert yang sedang menggantung
+              git revert --abort || true
+              
+              # Tambahkan git reset --hard untuk memastikan working tree benar-benar bersih 
+              # sebelum lanjut ke hash berikutnya (jaga-jaga jika ada file uncommitted)
+              git reset --hard HEAD
+              
               FAILED_LIST="$FAILED_LIST $HASH"
             fi
           done
@@ -73,9 +45,3 @@ jobs:
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
-
-      - name: Push Changes
-        # Push hanya dijalankan JIKA ada minimal 1 commit yang berhasil di-revert
-        if: steps.revert.outputs.has_changes == 'true'
-        run: |
-          git push origin ${{ inputs.branch }}
