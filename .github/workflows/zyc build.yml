@@ -19,7 +19,7 @@ on:
         required: true
         default: 'earth_defconfig'
       kernelsu_url:
-        description: 'Custom KSU URL'
+        description: 'Custom KSU URL (Kosongkan untuk skip KSU)'
         required: false
         default: 'https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh'
       kernelsu_branch:
@@ -55,7 +55,9 @@ jobs:
         git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
+    # SETUP KERNELSU DENGAN KONDISI (BISA DILEWATI)
     - name: Setup KernelSU
+      if: github.event.inputs.kernelsu_url != ''
       run: |
         curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
 
