@@ -49,10 +49,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
 
-    # MENGGANTI AOSP CLANG DENGAN ZYC-CLANG (CUSTOM GAMING TOOLCHAIN)
-    - name: Setup ZyC-Clang (Optimized Toolchain)
+    # MENGGUNAKAN ZYC-CLANG (MIRROR CLANGSANTONI)
+    - name: Setup ZyC-Clang
       run: |
-        git clone --depth=1 https://gitlab.com/ZyC-X/clang.git -b 18 clang
+        git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
     - name: Setup KernelSU
