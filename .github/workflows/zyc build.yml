@@ -1,0 +1,93 @@
+Name: Build Kernel Custom (Extreme Gaming)
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-20.04
+      branch:
+        description: 'Branch'
+        required: true
+      defconfig:
+        description: 'Defconfig'
+        required: true
+        default: 'earth_defconfig'
+      kernelsu_url:
+        description: 'Custom KSU URL'
+        required: false
+        default: 'https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh'
+      kernelsu_branch:
+        description: 'KSU Branch / Version'
+        required: false
+        default: 'v.4.1.0'
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.runner }}
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch }}
+        submodules: recursive
+
+    - name: Set Variables
+      run: |
+        echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
+        # Menambahkan LLVM=1 dan LLVM_IAS=1 secara default ke ARGS
+        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
+
+    - name: Install Dependencies
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
+
+    # MENGGANTI AOSP CLANG DENGAN ZYC-CLANG (CUSTOM GAMING TOOLCHAIN)
+    - name: Setup ZyC-Clang (Optimized Toolchain)
+      run: |
+        git clone --depth=1 https://gitlab.com/ZyC-X/clang.git -b 18 clang
+        echo "$PWD/clang/bin" >> $GITHUB_PATH
+
+    - name: Setup KernelSU
+      run: |
+        curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
+
+    - name: Generate Defconfig
+      run: |
+        make O=out $ARGS ${{ github.event.inputs.defconfig }}
+
+    # KOMPILASI DENGAN FLAG -O3, POLLY, DAN CORTEX OPTIMIZATION
+    - name: Compile Kernel
+      run: |
+        # Injeksi -O3 dan instruksi khusus MT6768 (Cortex-A75 & A55) via KCFLAGS
+        make O=out -j$(nproc) $ARGS \
+          KCFLAGS="-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55" || \
+        make O=out -j1 $ARGS KCFLAGS="-O3 -Wno-error"
+
+    - name: Check Build Output
+      run: |
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "Error: Image.gz-dtb tidak ditemukan. Build kernel gagal."
+          exit 1
+        else
+          echo "Kernel berhasil di-build dengan Optimasi Maksimal."
+        fi
+
+    - name: Upload Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Result-${{ env.BUILD_TIME }}-EXTREME
+        path: |
+          out/arch/arm64/boot/Image.gz*
+          out/arch/arm64/boot/dts/**/*.dtb
+          out/arch/arm64/boot/dts/**/*.gz
+          out/arch/arm64/boot/dts/**/*.gz-dtb
+        retention-days: 7
