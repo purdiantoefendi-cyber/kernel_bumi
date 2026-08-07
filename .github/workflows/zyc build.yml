@@ -21,11 +21,11 @@ on:
       kernelsu_url:
         description: 'Custom KSU URL (Kosongkan untuk skip KSU)'
         required: false
-        default: 'https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh'
+        default: ''
       kernelsu_branch:
         description: 'KSU Branch / Version'
         required: false
-        default: 'v.4.1.0'
+        default: ''
 
 jobs:
   build:
