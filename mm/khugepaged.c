@@ -2023,8 +2023,3 @@ void khugepaged_min_free_kbytes_update(void)
 		set_recommended_min_free_kbytes();
 	mutex_unlock(&khugepaged_mutex);
 }
-/* DUMMY FIX FOR THP tlb_remove_table_sync_one */
-void tlb_remove_table_sync_one(void)
-{
-    // Do nothing
-}
