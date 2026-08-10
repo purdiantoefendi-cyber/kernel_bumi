@@ -146,6 +146,8 @@ void charger_manager_set_system_temp_level(int temp_level)
 {
         int thermal_icl_ua;
         struct charger_data *pdata;
+        
+        int thermal_max = sizeof(thermal_mitigation_dcp) / sizeof(thermal_mitigation_dcp[0]);
 
         /* ====================================================
          * HACK EXTREME THERMAL: ANTI THROTTLING ARUS
@@ -155,8 +157,6 @@ void charger_manager_set_system_temp_level(int temp_level)
         temp_level = 0; 
         /* ==================================================== */
         
-        int thermal_max = sizeof(thermal_mitigation_dcp) / sizeof(thermal_mitigation_dcp[0]);
-
         if (temp_level > (thermal_max - 1))
                 pinfo->temp_level = thermal_max - 1;
         else
