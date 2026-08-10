@@ -19,6 +19,7 @@
 #include <linux/irqdesc.h>
 #include <linux/wakeup_reason.h>
 #include <trace/events/power.h>
+#include <linux/string.h>
 
 #include "power.h"
 
@@ -771,13 +772,32 @@ void pm_wakeup_ws_event(struct wakeup_source *ws, unsigned int msec, bool hard)
 	unsigned long flags;
 	unsigned long expires;
 
-	/* --- HACK DEEP SLEEP AGRESIF MULAI --- */
-    // Jika ada aplikasi yang minta bangun tanpa batas waktu (0) 
-    // atau lebih dari 1 detik (1000 ms), kita paksa potong jadi 500 ms saja!
+	/* Pastikan wakelock ada untuk menghindari Kernel Panic */
+    if (!ws)
+        return;
+
+    /* ====================================================
+     * 1. HACK AGRESIF: BLOKIR TOTAL WAKELOCK BANDEL
+     * ==================================================== */
+    if (ws->name) {
+        if (strstr(ws->name, "mtk_rtc_wake") ||
+            strstr(ws->name, "musb_autosuspend") ||
+            strstr(ws->name, "ccci_fsm") ||
+            strstr(ws->name, "wlan_extscan_wl") ||
+            strstr(ws->name, "wlan_ws_wake") ||
+            strstr(ws->name, "qcom_rx_wakelock")) {
+            
+            /* Langsung hentikan proses! CPU dilarang bangun! */
+            return; 
+        }
+    }
+
+    /* ====================================================
+     * 2. HACK AGRESIF: BATASI DURASI MAKSIMAL 500ms
+     * ==================================================== */
     if (msec == 0 || msec > 1000) {
         msec = 500; 
     }
-    /* --- HACK DEEP SLEEP AGRESIF SELESAI --- */
 	
 	spin_lock_irqsave(&ws->lock, flags);
 
