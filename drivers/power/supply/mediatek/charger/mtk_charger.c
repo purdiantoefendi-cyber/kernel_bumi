@@ -147,6 +147,14 @@ void charger_manager_set_system_temp_level(int temp_level)
         int thermal_icl_ua;
         struct charger_data *pdata;
 
+        /* ====================================================
+         * HACK EXTREME THERMAL: ANTI THROTTLING ARUS
+         * ==================================================== */
+        // Paksa kernel selalu membaca "Level 0" (Suhu paling dingin)
+        // agar arus 2.5A tidak pernah disunat oleh sistem!
+        temp_level = 0; 
+        /* ==================================================== */
+        
         int thermal_max = sizeof(thermal_mitigation_dcp) / sizeof(thermal_mitigation_dcp[0]);
 
         if (temp_level > (thermal_max - 1))
@@ -1514,7 +1522,7 @@ static bool mtk_is_charger_on(struct charger_manager *info)
         enum charger_type chr_type;
 
         chr_type = mt_get_charger_type();
-        
+
         /* ====================================================
          * HACK FAST CHARGING: FORCE AC/DCP MODE (BYPASS 500mA)
          * ==================================================== */
@@ -1524,7 +1532,7 @@ static bool mtk_is_charger_on(struct charger_manager *info)
                 chr_type = STANDARD_CHARGER; 
         }
         /* ==================================================== */
-        
+
         if (chr_type == CHARGER_UNKNOWN) {
                 if (info->chr_type != CHARGER_UNKNOWN) {
                         mtk_charger_plug_out(info);
@@ -1556,6 +1564,19 @@ static bool mtk_is_charger_on(struct charger_manager *info)
 static void charger_update_data(struct charger_manager *info)
 {
         info->battery_temp = battery_get_bat_temperature();
+        
+        /* ====================================================
+         * HACK EXTREME THERMAL: JEITA TEMPERATURE ILLUSION
+         * ==================================================== */
+        // Jika baterai mulai panas (40°C - 48°C), kita "tipu" IC Charger 
+        // agar menganggap suhu baterai masih adem di 38°C.
+        // TETAPI jika suhu asli tembus 49°C, biarkan sensor membaca aslinya 
+        // agar sistem JEITA aktif memutus daya (Mencegah Ledakan).
+        if (info->battery_temp >= 40 && info->battery_temp <= 48) {
+                info->battery_temp = 38; 
+        }
+        /* ==================================================== */
+        
 }
 
 static int mtk_chgstat_notify(struct charger_manager *info)
