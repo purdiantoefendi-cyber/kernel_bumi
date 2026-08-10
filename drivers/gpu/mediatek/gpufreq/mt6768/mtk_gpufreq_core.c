@@ -3051,7 +3051,7 @@ int get_immediate_gpu_wrap(void)
 {
     return 0; 
 }
-int mtk_gpufreq_register(void *p, int num)
+int mtk_gpufreq_register(void *p, unsigned int num)
 {
     return 0;
 }
