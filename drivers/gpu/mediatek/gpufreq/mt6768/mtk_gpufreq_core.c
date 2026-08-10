@@ -3045,3 +3045,13 @@ module_exit(__mt_gpufreq_exit);
 MODULE_DEVICE_TABLE(of, g_gpufreq_of_match);
 MODULE_DESCRIPTION("MediaTek GPU-DVFS driver");
 MODULE_LICENSE("GPL");
+
+/* DUMMY FIX FOR THERMAL OFF */
+int get_immediate_gpu_wrap(void)
+{
+    return 0; 
+}
+int mtk_gpufreq_register(void *p, int num)
+{
+    return 0;
+}
