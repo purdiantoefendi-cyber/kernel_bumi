@@ -32,7 +32,7 @@ static void tlb_remove_table_smp_sync(void *arg)
 
 static void tlb_remove_table_sync_one(void)
 {
-// Do nothing
+smp_call_function(tlb_remove_table_smp_sync, NULL, 1);
 }
 #endif
 
@@ -2022,4 +2022,9 @@ void khugepaged_min_free_kbytes_update(void)
 	if (khugepaged_enabled() && khugepaged_thread)
 		set_recommended_min_free_kbytes();
 	mutex_unlock(&khugepaged_mutex);
+}
+/* DUMMY FIX FOR THP tlb_remove_table_sync_one */
+void tlb_remove_table_sync_one(void)
+{
+    // Do nothing
 }
