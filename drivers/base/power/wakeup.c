@@ -771,9 +771,14 @@ void pm_wakeup_ws_event(struct wakeup_source *ws, unsigned int msec, bool hard)
 	unsigned long flags;
 	unsigned long expires;
 
-	if (!ws)
-		return;
-
+	/* --- HACK DEEP SLEEP AGRESIF MULAI --- */
+    // Jika ada aplikasi yang minta bangun tanpa batas waktu (0) 
+    // atau lebih dari 1 detik (1000 ms), kita paksa potong jadi 500 ms saja!
+    if (msec == 0 || msec > 1000) {
+        msec = 500; 
+    }
+    /* --- HACK DEEP SLEEP AGRESIF SELESAI --- */
+	
 	spin_lock_irqsave(&ws->lock, flags);
 
 	wakeup_source_report_event(ws, hard);
