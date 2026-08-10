@@ -1734,8 +1734,8 @@ static ssize_t disksize_store(struct device *dev,
 	 * ==================================================== */
 	si_meminfo(&si); // Kernel mengecek total RAM fisik perangkat
     
-	// Hitung 100% RAM: Total RAM dikali satuan ukurannya (Bytes)
-	disksize = (u64)si.totalram * si.mem_unit; 
+	// Hitung 150% RAM: Total RAM dikali satuan ukurannya (Bytes)
+	disksize = ((u64)si.totalram * si.mem_unit) * 3 / 2;
 	/* ==================================================== */
 
         if (!disksize)
