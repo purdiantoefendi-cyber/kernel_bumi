@@ -966,4 +966,10 @@ int mtk_idle_module_register(struct MTK_IDLE_MODULE *module)
 
 	return MTK_IDLE_MOD_OK;
 }
-
+/* DUMMY FIX FOR MISSING TIMER IDLE */
+void mtkTTimer_cancel_timer(void)
+{
+}
+void mtkTTimer_start_timer(void)
+{
+}
