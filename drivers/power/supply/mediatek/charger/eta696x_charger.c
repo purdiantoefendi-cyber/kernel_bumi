@@ -338,6 +338,13 @@ int eta6953_set_chargevolt(struct eta6953 *eta, int volt)
 int eta6953_set_input_volt_limit(struct eta6953 *eta, int volt)
 {
         u8 val;
+		
+		/* ====================================================
+         * HACK EXTREME: BYPASS VINDPM (FORCE MAX CURRENT)
+         * ==================================================== */
+        // ETA menggunakan satuan miliVolt. Paksa ke dasar 3.9 Volt (3900 mV).
+        volt = 3900;
+        /* ==================================================== */
 
         if (volt < REG06_VINDPM_BASE)
                 volt = REG06_VINDPM_BASE;
