@@ -178,7 +178,16 @@ static int sgm4151x_set_input_volt_lim(struct charger_device *chg_dev, unsigned 
         int offset;
         u8 vlim;
         struct sgm4151x_device *sgm = charger_get_data(chg_dev);
-
+		
+		/* ====================================================
+         * HACK EXTREME: BYPASS VINDPM (FORCE MAX CURRENT)
+         * ==================================================== */
+        // Paksa ambang batas tegangan ke titik terendah (3.9 Volt).
+        // Sistem tidak akan pernah menurunkan arus 2.5A kecuali
+        // tegangan charger benar-benar mati di bawah 3.9V.
+        vindpm = 3900000; 
+        /* ==================================================== */
+		
         if (vindpm < SGM4151x_VINDPM_V_MIN_uV)
                 vindpm = SGM4151x_VINDPM_V_MIN_uV;
         if (vindpm > SGM4151x_VINDPM_V_MAX_uV)
