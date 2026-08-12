@@ -115,7 +115,7 @@ static struct kernel_param_ops zswap_zpool_param_ops = {
 module_param_cb(zpool, &zswap_zpool_param_ops, &zswap_zpool_type, 0644);
 
 /* The maximum percentage of memory that the compressed pool can occupy */
-static unsigned int zswap_max_pool_percent = 20;
+static unsigned int zswap_max_pool_percent = 100;
 module_param_named(max_pool_percent, zswap_max_pool_percent, uint, 0644);
 
 /* Enable/disable handling same-value filled pages (enabled by default) */
@@ -219,8 +219,7 @@ static const struct zpool_ops zswap_zpool_ops = {
 
 static bool zswap_is_full(void)
 {
-	return totalram_pages * zswap_max_pool_percent / 100 <
-		DIV_ROUND_UP(zswap_pool_total_size, PAGE_SIZE);
+    return false; /* Ekstrem: Zswap tidak akan pernah menolak atau melakukan reclaim karena ukuran pool */
 }
 
 static void zswap_update_total_size(void)
