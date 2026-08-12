@@ -1384,14 +1384,16 @@ compress_again:
                 return -ENOMEM;
         }
 
-        alloced_pages = zs_get_total_pages(zram->mem_pool);
+       alloced_pages = zs_get_total_pages(zram->mem_pool);
         update_used_max(zram, alloced_pages);
 
+        /* BYPASS EXTREME: Matikan penolakan alokasi saat RAM penuh
         if (zram->limit_pages && alloced_pages > zram->limit_pages) {
                 zcomp_stream_put(zram->comp);
                 zs_free(zram->mem_pool, handle);
                 return -ENOMEM;
         }
+        */
 
         dst = zs_map_object(zram->mem_pool, handle, ZS_MM_WO);
 
