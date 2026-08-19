@@ -1,6 +1,6 @@
 /*
  * Cryptographic API.
- * Adaptive WKdm-LZ4HC Hybrid Compressor (V5 - Enterprise Ready)
+ * Adaptive WKdm-LZ4HC Hybrid Compressor (V5 - Extreme Level 12)
  * Engineered STRICTLY for 4096-Byte Memory Pages (ZRAM)
  */
 #include <linux/init.h>
@@ -21,7 +21,7 @@
 #define WKDM_DICT_BUCKETS   128  /* 128 Buckets x 2-Way = 256 Entries */
 #define WKDM_MAX_CAPACITY   8192
 
-/* 2-Bit Packed Tags (Pure Word-Domain, Zero-Run dihapus) */
+/* 2-Bit Packed Tags (Pure Word-Domain) */
 #define TAG_ZERO       0x00      /* Payload: None */
 #define TAG_DICT_0     0x01      /* Payload: 1-byte index */
 #define TAG_DICT_1     0x02      /* Payload: 1-byte index */
@@ -141,7 +141,7 @@ static int wkdm_unpack(const u8 *src, unsigned int slen, u8 *out_buf) {
     int tag_shift = 8;
 
     while (out_ptr < out_end) {
-        u8 tag; /* C99 fix: Dideklarasikan di awal blok loop */
+        u8 tag; 
 
         if (tag_shift == 8) {
             if (in_ptr >= in_end) return -EINVAL;
@@ -237,7 +237,7 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 }
 
 /* ========================================================
- * 5. FUNGSI EKSEKUSI (ROI ADAPTIVE FALLBACK)
+ * 5. FUNGSI EKSEKUSI (ROI ADAPTIVE FALLBACK - LEVEL 12)
  * ======================================================== */
 static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src,
                             unsigned int slen, u8 *dst, unsigned int *dlen,
@@ -253,12 +253,14 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src,
     if (should_use_hybrid(src)) {
         len_wkdm = wkdm_pack(src, ctx->wkdm_buffer, WKDM_MAX_CAPACITY);
         if (len_wkdm > 0 && len_wkdm < WKDM_PAGE_SIZE) {
+            /* Hybrid Compression dipaksa ke Level 12 */
             len_hybrid = LZ4_compress_HC(ctx->wkdm_buffer, ctx->hybrid_comp_buf, 
-                                         len_wkdm, HYBRID_MAX_OUTPUT, 6, ctx->lz4hc_workspace);
+                                         len_wkdm, HYBRID_MAX_OUTPUT, 12, ctx->lz4hc_workspace);
         }
     } 
     
-    len_plain = LZ4_compress_HC(src, dst + 1, WKDM_PAGE_SIZE, HYBRID_MAX_OUTPUT, 6, ctx->lz4hc_workspace);
+    /* Plain LZ4HC dipaksa ke Level 12 */
+    len_plain = LZ4_compress_HC(src, dst + 1, WKDM_PAGE_SIZE, HYBRID_MAX_OUTPUT, 12, ctx->lz4hc_workspace);
 
     /* Pemilihan Kepadatan dengan Margin Penghematan CPU */
     if (len_hybrid > 0 && len_plain > 0) {
@@ -346,5 +348,5 @@ module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("V5 ZRAM Hybrid Compressor: WKdm Word-Domain + LZ4HC Byte-Domain");
+MODULE_DESCRIPTION("V5 ZRAM Hybrid Compressor: WKdm Word-Domain + LZ4HC Byte-Domain (Level 12)");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
