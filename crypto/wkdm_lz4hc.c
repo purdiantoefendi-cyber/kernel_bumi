@@ -141,13 +141,15 @@ static int wkdm_unpack(const u8 *src, unsigned int slen, u8 *out_buf) {
     int tag_shift = 8;
 
     while (out_ptr < out_end) {
+        u8 tag; /* C99 fix: Dideklarasikan di awal blok loop */
+
         if (tag_shift == 8) {
             if (in_ptr >= in_end) return -EINVAL;
             current_tags = *in_ptr++;
             tag_shift = 0;
         }
 
-        u8 tag = (current_tags >> tag_shift) & 0x03;
+        tag = (current_tags >> tag_shift) & 0x03;
         tag_shift += 2;
 
         if (tag == TAG_ZERO) {
@@ -202,8 +204,8 @@ static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
     struct hybrid_ctx *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
     if (!ctx) return ERR_PTR(-ENOMEM);
 
-    /* Menggunakan kvmalloc untuk workspace raksasa LZ4HC agar tidak gagal saat OOM */
-    ctx->lz4hc_workspace = kvmalloc(LZ4HC_MEM_COMPRESS, GFP_KERNEL);
+    /* Fallback ke vmalloc untuk compatibility dengan versi kernel */
+    ctx->lz4hc_workspace = vmalloc(LZ4HC_MEM_COMPRESS);
     if (!ctx->lz4hc_workspace) goto err_workspace;
 
     ctx->wkdm_buffer = kmalloc(WKDM_MAX_CAPACITY, GFP_KERNEL);
@@ -217,7 +219,7 @@ static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
 err_hybrid:
     kfree(ctx->wkdm_buffer);
 err_wkdm:
-    kvfree(ctx->lz4hc_workspace);
+    vfree(ctx->lz4hc_workspace);
 err_workspace:
     kfree(ctx);
     return ERR_PTR(-ENOMEM);
@@ -229,7 +231,7 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
     if (ctx) {
         kfree(ctx->hybrid_comp_buf);
         kfree(ctx->wkdm_buffer);
-        kvfree(ctx->lz4hc_workspace);
+        vfree(ctx->lz4hc_workspace);
         kfree(ctx);
     }
 }
