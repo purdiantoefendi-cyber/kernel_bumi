@@ -11,6 +11,7 @@ on:
         options:
           - ubuntu-latest
           - ubuntu-20.04
+          - self-hosted
       branch:
         description: 'Branch'
         required: true
