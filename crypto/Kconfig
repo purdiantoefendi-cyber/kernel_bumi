@@ -1852,6 +1852,21 @@ config CRYPTO_LZ4HC
 	help
 	  This is the LZ4 high compression mode algorithm.
 
+config CRYPTO_WKDM_LZ4HC
+	tristate "WKdm-LZ4HC Hybrid Compression Algorithm"
+	select CRYPTO_ALGAPI
+	select LZ4HC_COMPRESS
+	select LZ4_DECOMPRESS
+	help
+	  This is a custom hybrid compression algorithm engineered
+	  specifically for 4KB memory pages (ZRAM) on Android.
+	  
+	  It combines Apple's WKdm direct-mapped word-domain 
+	  filtering with LZ4HC's byte-domain compression to achieve 
+	  extreme density with very low CPU overhead.
+
+	  If you choose 'M' here, this module will be called wkdm_lz4hc.
+
 config CRYPTO_ZSTD
 	tristate "Zstd compression algorithm"
 	select CRYPTO_ALGAPI
