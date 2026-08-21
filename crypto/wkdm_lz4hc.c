@@ -1,38 +1,18 @@
 /*
  * Cryptographic API.
  *
- * WKdm-LZ4HC Absolute Linear Compressor V20.1 (Final Optimized)
+ * WKdm-LZ4HC V21.1 Extreme LZ4-Friendly (Micro-Optimized)
  *
- * SUPER-DENSE STRUCTURAL PRE-COMPRESSOR
- *
- * Pipeline:
- *
- *      4096 BYTE PAGE
- *            |
- *            v
- *       WKdm 1-PASS
- *            |
- *            +--> ZERO TAG
- *            |
- *            +--> DICT0 INDEX
- *            |
- *            +--> DICT1 INDEX
- *            |
- *            +--> RAW BYTE PLANES (MSB -> B2 -> B1 -> LSB)
- *            |
- *            +--> XOR DELTA PER PLANE
- *            |
- *            v
- *       LZ4HC LEVEL 12
- *            |
- *            v
- *           ZRAM
- *
- * Properties:
- *  - Absolute Linear
- *  - Single WKdm pass & LZ4HC pass
- *  - No analyzer, No trial compression, No padding
- *  - Kernel Stack Safe (No large local arrays)
+ * ============================================================
+ * V21.1 FEATURES
+ * ------------------------------------------------------------
+ * - 128 x 2 WKdm dictionary
+ * - 2-bit tags
+ * - Delta encoded DICT0 & DICT1 indices
+ * - Delta encoded MISS byte planes (MSB -> B2 -> B1 -> LSB)
+ * - Pure Linear Pipeline (No RLE, No Analyzer, No Trial)
+ * - CPU affinity: CPU 0 + 1 + 6
+ * - MICRO-OPTIMIZED: __restrict pointers, minimized memory reads.
  */
 
 #include <linux/init.h>
@@ -41,6 +21,9 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/lz4.h>
+#include <linux/sched.h>
+#include <linux/cpumask.h>
+#include <linux/version.h>
 #include <crypto/internal/scompress.h>
 #include <asm/unaligned.h>
 
@@ -49,21 +32,15 @@
  * ============================================================ */
 #define WKDM_PAGE_SIZE          4096
 #define WKDM_WORDS              1024
-
 #define WKDM_DICT_BUCKETS       128
 #define WKDM_DICT_WAYS          2
-
-#define WKDM_TAG_BYTES          256
-
-#define WKDM_MAX_INDEX_BYTES    1024
-#define WKDM_MAX_MISS           1024
-
+#define WKDM_TAG_BYTES          (WKDM_WORDS / 4)
+#define WKDM_MAX_INDEX_BYTES    WKDM_WORDS
+#define WKDM_MAX_MISS           WKDM_WORDS
 #define WKDM_RAW_PLANE_SIZE     WKDM_MAX_MISS
 #define WKDM_RAW_BUFFER_SIZE    (WKDM_RAW_PLANE_SIZE * 4)
 
-/* Header (12 bytes) */
 #define WKDM_HEADER_SIZE        12
-
 #define WKDM_MAX_CAPACITY       \
         (WKDM_HEADER_SIZE +     \
          WKDM_TAG_BYTES +       \
@@ -83,7 +60,14 @@
 #define TAG_MISS                0x03
 
 /* ============================================================
- * 3. CONTEXT
+ * 3. CPU AFFINITY
+ * ============================================================ */
+#define WKDM_CPU_LITTLE0        0
+#define WKDM_CPU_LITTLE1        1
+#define WKDM_CPU_BIG            6
+
+/* ============================================================
+ * 4. HYBRID CONTEXT
  * ============================================================ */
 struct hybrid_ctx {
     void *lz4hc_workspace;
@@ -98,7 +82,7 @@ struct hybrid_ctx {
 };
 
 /* ============================================================
- * 4. FAST HASH
+ * 5. FAST HASH
  * ============================================================ */
 static __always_inline u32 hash_word(u32 word)
 {
@@ -106,29 +90,45 @@ static __always_inline u32 hash_word(u32 word)
 }
 
 /* ============================================================
- * 5. HEADER
+ * 6. HEADER FLAGS (V21)
  * ============================================================ */
-static __always_inline void
-wkdm_write_header(u8 *dst, u16 index0_len, u16 index1_len, u16 miss_count)
+#define WKDM_FLAG_INDEX0_DELTA  (1U << 0)
+#define WKDM_FLAG_INDEX1_DELTA  (1U << 1)
+#define WKDM_FLAG_R3_DELTA      (1U << 2)
+#define WKDM_FLAG_R2_DELTA      (1U << 3)
+#define WKDM_FLAG_R1_DELTA      (1U << 4)
+#define WKDM_FLAG_R0_DELTA      (1U << 5)
+
+#define WKDM_FLAGS_V21 \
+        (WKDM_FLAG_INDEX0_DELTA | \
+         WKDM_FLAG_INDEX1_DELTA | \
+         WKDM_FLAG_R3_DELTA | \
+         WKDM_FLAG_R2_DELTA | \
+         WKDM_FLAG_R1_DELTA | \
+         WKDM_FLAG_R0_DELTA)
+
+static __always_inline void wkdm_write_header(u8 *dst, u16 index0_len, u16 index1_len, u16 miss_count)
 {
     put_unaligned_le16(WKDM_MAGIC, dst + 0);
     put_unaligned_le16(index0_len, dst + 2);
     put_unaligned_le16(index1_len, dst + 4);
     put_unaligned_le16(miss_count, dst + 6);
-    put_unaligned_le32(0, dst + 8);
+    put_unaligned_le32(WKDM_FLAGS_V21, dst + 8);
 }
 
-static __always_inline int
-wkdm_read_header(const u8 *src, unsigned int slen,
-                 u16 *index0_len, u16 *index1_len, u16 *miss_count)
+static __always_inline int wkdm_read_header(const u8 *src, unsigned int slen, 
+                                            u16 *index0_len, u16 *index1_len, u16 *miss_count)
 {
+    u32 flags;
     if (unlikely(slen < WKDM_HEADER_SIZE)) return -EINVAL;
-    if (unlikely(get_unaligned_le16(src) != WKDM_MAGIC)) return -EINVAL;
+    if (unlikely(get_unaligned_le16(src + 0) != WKDM_MAGIC)) return -EINVAL;
 
     *index0_len = get_unaligned_le16(src + 2);
     *index1_len = get_unaligned_le16(src + 4);
     *miss_count = get_unaligned_le16(src + 6);
+    flags = get_unaligned_le32(src + 8);
 
+    if (unlikely(flags != WKDM_FLAGS_V21)) return -EINVAL;
     if (unlikely(*index0_len > WKDM_MAX_INDEX_BYTES || 
                  *index1_len > WKDM_MAX_INDEX_BYTES || 
                  *miss_count > WKDM_MAX_MISS))
@@ -138,15 +138,14 @@ wkdm_read_header(const u8 *src, unsigned int slen,
 }
 
 /* ============================================================
- * 6. XOR DELTA ENCODING
+ * 7. XOR DELTA ENCODER (Optimized with __restrict)
  * ============================================================ */
-static __always_inline void
-wkdm_delta_encode(u8 *buf, unsigned int len)
+static __always_inline void wkdm_delta_encode(u8 * __restrict buf, unsigned int len)
 {
     unsigned int i;
     u8 prev;
 
-    if (len <= 1) return;
+    if (unlikely(len <= 1)) return;
 
     prev = buf[0];
     for (i = 1; i < len; i++) {
@@ -157,15 +156,42 @@ wkdm_delta_encode(u8 *buf, unsigned int len)
 }
 
 /* ============================================================
- * 7. WKDM PACK
+ * 8. CPU AFFINITY HELPERS
  * ============================================================ */
-static int
-wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
+static __always_inline void wkdm_build_cpu_mask(cpumask_t *mask)
 {
-    u32 *dict = ctx->wkdm_dict;
-    u8 *index0 = ctx->index0_buffer;
-    u8 *index1 = ctx->index1_buffer;
-    u8 *r0 = ctx->raw_b0, *r1 = ctx->raw_b1, *r2 = ctx->raw_b2, *r3 = ctx->raw_b3;
+    cpumask_clear(mask);
+    cpumask_set_cpu(WKDM_CPU_LITTLE0, mask);
+    cpumask_set_cpu(WKDM_CPU_LITTLE1, mask);
+    cpumask_set_cpu(WKDM_CPU_BIG, mask);
+}
+
+static __always_inline void wkdm_save_cpu_mask(cpumask_t *mask)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+    cpumask_copy(mask, current->cpus_ptr);
+#else
+    cpumask_copy(mask, &current->cpus_allowed);
+#endif
+}
+
+static __always_inline void wkdm_set_cpu_mask(const cpumask_t *mask)
+{
+    set_cpus_allowed_ptr(current, mask);
+}
+
+/* ============================================================
+ * 9. WKDM PACK (Memory-Read Optimized)
+ * ============================================================ */
+static int wkdm_pack_split(const u8 * __restrict src, u8 * __restrict out, struct hybrid_ctx *ctx)
+{
+    u32 * __restrict dict = ctx->wkdm_dict;
+    u8 * __restrict index0 = ctx->index0_buffer;
+    u8 * __restrict index1 = ctx->index1_buffer;
+    u8 * __restrict r0 = ctx->raw_b0;
+    u8 * __restrict r1 = ctx->raw_b1;
+    u8 * __restrict r2 = ctx->raw_b2;
+    u8 * __restrict r3 = ctx->raw_b3;
     u8 tags[WKDM_TAG_BYTES] = { 0 };
 
     unsigned int index0_len = 0, index1_len = 0, miss_count = 0, word;
@@ -182,37 +208,41 @@ wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
         } else {
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
-
-            if (likely(entry[0] == value)) {
+            
+            /* OPTIMIZATION: Load dictionary once into CPU registers */
+            u32 way0 = entry[0];
+            
+            if (likely(way0 == value)) {
                 tag = TAG_DICT_0;
                 index0[index0_len++] = (u8)bucket;
-            } else if (entry[1] == value) {
-                tag = TAG_DICT_1;
-                index1[index1_len++] = (u8)bucket;
-                entry[1] = entry[0];
-                entry[0] = value;
             } else {
-                tag = TAG_MISS;
-                r0[miss_count] = (u8)value;
-                r1[miss_count] = (u8)(value >> 8);
-                r2[miss_count] = (u8)(value >> 16);
-                r3[miss_count] = (u8)(value >> 24);
-                miss_count++;
-                
-                entry[1] = entry[0];
+                u32 way1 = entry[1];
+                if (way1 == value) {
+                    tag = TAG_DICT_1;
+                    index1[index1_len++] = (u8)bucket;
+                } else {
+                    tag = TAG_MISS;
+                    r0[miss_count] = (u8)value;
+                    r1[miss_count] = (u8)(value >> 8);
+                    r2[miss_count] = (u8)(value >> 16);
+                    r3[miss_count] = (u8)(value >> 24);
+                    miss_count++;
+                }
+                /* Fast-path dictionary update for both DICT_1 & MISS */
+                entry[1] = way0;
                 entry[0] = value;
             }
         }
         tags[word >> 2] |= tag << ((word & 3) << 1);
     }
 
-    /* Transform to Delta */
+    wkdm_delta_encode(index0, index0_len);
+    wkdm_delta_encode(index1, index1_len);
     wkdm_delta_encode(r3, miss_count);
     wkdm_delta_encode(r2, miss_count);
     wkdm_delta_encode(r1, miss_count);
     wkdm_delta_encode(r0, miss_count);
 
-    /* Assemble Stream */
     {
         unsigned int offset = 0;
 
@@ -245,19 +275,19 @@ wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
 }
 
 /* ============================================================
- * 8. WKDM UNPACK WITH STREAMING DELTA PLANES
+ * 10. WKDM UNPACK
  * ============================================================ */
-static int
-wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx *ctx)
+static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen, 
+                              u8 * __restrict dst, struct hybrid_ctx *ctx)
 {
-    /* KERNEL SAFETY FIX: Use heap-allocated dict instead of stack */
-    u32 *dict = ctx->wkdm_dict;
+    u32 * __restrict dict = ctx->wkdm_dict;
     const u8 *tags, *index0, *index1, *r3, *r2, *r1, *r0;
     
     u16 index0_len, index1_len, miss_count;
     unsigned int index0_used = 0, index1_used = 0, miss_used = 0;
     unsigned int expected_size, word;
-
+    
+    u8 index0_prev = 0, index1_prev = 0;
     u8 prev0 = 0, prev1 = 0, prev2 = 0, prev3 = 0;
 
     if (unlikely(wkdm_read_header(src, slen, &index0_len, &index1_len, &miss_count)))
@@ -274,7 +304,6 @@ wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx 
     r1 = r2 + miss_count;
     r0 = r1 + miss_count;
 
-    /* Reset dictionary state for decompression */
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
     for (word = 0; word < WKDM_WORDS; word++) {
@@ -288,43 +317,40 @@ wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx 
 
         case TAG_DICT_0:
             if (unlikely(index0_used >= index0_len)) return -EINVAL;
-            bucket = index0[index0_used++];
-            if (unlikely(bucket >= WKDM_DICT_BUCKETS)) return -EINVAL;
+            index0_prev ^= index0[index0_used++];
+            bucket = index0_prev;
             
-            entry = &dict[bucket << 1];
-            value = entry[0];
+            if (unlikely(bucket >= WKDM_DICT_BUCKETS)) return -EINVAL;
+            value = dict[bucket << 1]; /* dict[bucket][0] */
             put_unaligned_le32(value, dst + (word << 2));
             break;
 
         case TAG_DICT_1:
             if (unlikely(index1_used >= index1_len)) return -EINVAL;
-            bucket = index1[index1_used++];
-            if (unlikely(bucket >= WKDM_DICT_BUCKETS)) return -EINVAL;
+            index1_prev ^= index1[index1_used++];
+            bucket = index1_prev;
             
+            if (unlikely(bucket >= WKDM_DICT_BUCKETS)) return -EINVAL;
             entry = &dict[bucket << 1];
             value = entry[1];
             
             entry[1] = entry[0];
             entry[0] = value;
-            
             put_unaligned_le32(value, dst + (word << 2));
             break;
 
         case TAG_MISS:
             if (unlikely(miss_used >= miss_count)) return -EINVAL;
-
-            /* Streaming XOR-delta reconstruction */
             prev3 ^= r3[miss_used];
             prev2 ^= r2[miss_used];
             prev1 ^= r1[miss_used];
             prev0 ^= r0[miss_used];
+            miss_used++;
 
             value = ((u32)prev0) | ((u32)prev1 << 8) | ((u32)prev2 << 16) | ((u32)prev3 << 24);
-            miss_used++;
 
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
-            
             entry[1] = entry[0];
             entry[0] = value;
 
@@ -343,7 +369,7 @@ wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx 
 }
 
 /* ============================================================
- * 9. CONTEXT ALLOCATION
+ * 11. CONTEXT ALLOCATION
  * ============================================================ */
 static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
 {
@@ -394,7 +420,7 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 {
     struct hybrid_ctx *ctx = ctx_ptr;
     if (!ctx) return;
-
+    
     kfree(ctx->raw_b3); kfree(ctx->raw_b2); kfree(ctx->raw_b1); kfree(ctx->raw_b0);
     kfree(ctx->index1_buffer); kfree(ctx->index0_buffer);
     kfree(ctx->wkdm_dict); kfree(ctx->wkdm_buffer);
@@ -403,22 +429,33 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 }
 
 /* ============================================================
- * 10. ABSOLUTE LINEAR COMPRESS
+ * 12. COMPRESSION
  * ============================================================ */
 static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                             u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
     struct hybrid_ctx *ctx = ctx_ptr;
     int wkdm_len, lz4_len;
+    cpumask_t old_mask, wkdm_mask;
 
     if (unlikely(!dlen || slen != WKDM_PAGE_SIZE || *dlen < WKDM_PAGE_SIZE))
         return -EINVAL;
 
+    wkdm_save_cpu_mask(&old_mask);
+    wkdm_build_cpu_mask(&wkdm_mask);
+    wkdm_set_cpu_mask(&wkdm_mask);
+
     wkdm_len = wkdm_pack_split(src, ctx->wkdm_buffer, ctx);
-    if (unlikely(wkdm_len <= 0)) return -ENOSPC;
+    
+    if (unlikely(wkdm_len <= 0)) {
+        wkdm_set_cpu_mask(&old_mask);
+        return -ENOSPC;
+    }
 
     lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen,
                               WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
+
+    wkdm_set_cpu_mask(&old_mask);
 
     if (unlikely(lz4_len <= 0 || lz4_len >= WKDM_PAGE_SIZE))
         return -ENOSPC;
@@ -428,28 +465,40 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
 }
 
 /* ============================================================
- * 11. ABSOLUTE LINEAR DECOMPRESS
+ * 13. DECOMPRESSION
  * ============================================================ */
 static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                               u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
     struct hybrid_ctx *ctx = ctx_ptr;
     int ret;
+    cpumask_t old_mask, wkdm_mask;
 
     if (unlikely(!dlen || slen == 0)) return -EINVAL;
 
+    wkdm_save_cpu_mask(&old_mask);
+    wkdm_build_cpu_mask(&wkdm_mask);
+    wkdm_set_cpu_mask(&wkdm_mask);
+
     ret = LZ4_decompress_safe(src, ctx->wkdm_buffer, slen, WKDM_MAX_CAPACITY);
-    if (unlikely(ret < 0)) return -EINVAL;
-
-    if (unlikely(wkdm_unpack_linear(ctx->wkdm_buffer, ret, dst, ctx) < 0))
+    
+    if (unlikely(ret < 0)) {
+        wkdm_set_cpu_mask(&old_mask);
         return -EINVAL;
+    }
 
+    if (unlikely(wkdm_unpack_linear(ctx->wkdm_buffer, ret, dst, ctx) < 0)) {
+        wkdm_set_cpu_mask(&old_mask);
+        return -EINVAL;
+    }
+
+    wkdm_set_cpu_mask(&old_mask);
     *dlen = WKDM_PAGE_SIZE;
     return 0;
 }
 
 /* ============================================================
- * 12. SCOMP REGISTRATION
+ * 14. SCOMP REGISTRATION & MODULE
  * ============================================================ */
 static struct scomp_alg scomp = {
     .alloc_ctx  = hybrid_alloc_ctx,
@@ -470,5 +519,5 @@ module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("WKdm-LZ4HC V20.1 Super Dense XOR Pipeline Level 12");
+MODULE_DESCRIPTION("WKdm-LZ4HC V21.1 Extreme Optimized LZ4-Friendly Delta Stream");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
