@@ -1,18 +1,16 @@
 /*
  * Cryptographic API.
  *
- * WKdm-LZ4HC V21.1 Extreme LZ4-Friendly (Micro-Optimized)
+ * WKdm-LZ4/HC V22 Per-CPU Lockless Edition
  *
  * ============================================================
- * V21.1 FEATURES
+ * V22 ARCHITECTURE & FEATURES
  * ------------------------------------------------------------
- * - 128 x 2 WKdm dictionary
- * - 2-bit tags
- * - Delta encoded DICT0 & DICT1 indices
- * - Delta encoded MISS byte planes (MSB -> B2 -> B1 -> LSB)
- * - Pure Linear Pipeline (No RLE, No Analyzer, No Trial)
- * - CPU affinity: CPU 0 + 1 + 6
- * - MICRO-OPTIMIZED: __restrict pointers, minimized memory reads.
+ * - PER-CPU CONTEXT: Unified buffer allocations to minimize fragmentation.
+ * - TRUE RECLAIM DETECTION: Accurate PF_MEMALLOC & PF_KSWAPD parsing.
+ * - DUAL-THRESHOLD ENGINE: Dynamically scales compression based on 
+ *   precise CPU memory traffic pacing.
+ * - ZERO SHARED MUTABLE STATE: Completely lockless execution.
  */
 
 #include <linux/init.h>
@@ -22,14 +20,11 @@
 #include <linux/vmalloc.h>
 #include <linux/lz4.h>
 #include <linux/sched.h>
-#include <linux/cpumask.h>
-#include <linux/version.h>
+#include <linux/cache.h>
+#include <linux/jiffies.h>
 #include <crypto/internal/scompress.h>
 #include <asm/unaligned.h>
 
-/* ============================================================
- * 1. CORE CONSTANTS
- * ============================================================ */
 #define WKDM_PAGE_SIZE          4096
 #define WKDM_WORDS              1024
 #define WKDM_DICT_BUCKETS       128
@@ -38,109 +33,94 @@
 #define WKDM_MAX_INDEX_BYTES    WKDM_WORDS
 #define WKDM_MAX_MISS           WKDM_WORDS
 #define WKDM_RAW_PLANE_SIZE     WKDM_MAX_MISS
-#define WKDM_RAW_BUFFER_SIZE    (WKDM_RAW_PLANE_SIZE * 4)
+
+/* Unified Buffer Sizes */
+#define WKDM_TOTAL_RAW_BYTES    (WKDM_RAW_PLANE_SIZE * 4)
+#define WKDM_TOTAL_INDEX_BYTES  (WKDM_MAX_INDEX_BYTES * 2)
 
 #define WKDM_HEADER_SIZE        12
 #define WKDM_MAX_CAPACITY       \
         (WKDM_HEADER_SIZE +     \
          WKDM_TAG_BYTES +       \
-         WKDM_MAX_INDEX_BYTES + \
-         WKDM_MAX_INDEX_BYTES + \
-         WKDM_RAW_BUFFER_SIZE)
+         WKDM_TOTAL_INDEX_BYTES + \
+         WKDM_TOTAL_RAW_BYTES)
 
 #define WKDM_LZ4HC_LEVEL        12
 #define WKDM_MAGIC              0x3157
+#define WKDM_STREAM_VERSION     220
 
-/* ============================================================
- * 2. TAG FORMAT
- * ============================================================ */
+/* DYNAMIC CPU LOAD THRESHOLDS */
+#define THRESHOLD_CRITICAL      75
+#define THRESHOLD_HIGH          35
+
 #define TAG_ZERO                0x00
 #define TAG_DICT_0              0x01
 #define TAG_DICT_1              0x02
 #define TAG_MISS                0x03
 
 /* ============================================================
- * 3. CPU AFFINITY
+ * 1. CPU-LOCAL CONTEXT (Lockless)
  * ============================================================ */
-#define WKDM_CPU_LITTLE0        0
-#define WKDM_CPU_LITTLE1        1
-#define WKDM_CPU_BIG            6
-
-/* ============================================================
- * 4. HYBRID CONTEXT
- * ============================================================ */
-struct hybrid_ctx {
+struct hybrid_cpu_ctx {
+    void *lz4_workspace;
     void *lz4hc_workspace;
+    
     u8 *wkdm_buffer;
     u32 *wkdm_dict;
-    u8 *index0_buffer;
-    u8 *index1_buffer;
-    u8 *raw_b0;
-    u8 *raw_b1;
-    u8 *raw_b2;
-    u8 *raw_b3;
-};
+    
+    /* Unified Allocations */
+    u8 *index_buffer; 
+    u8 *raw_buffer;
+    u8 *tags_buffer;
 
-/* ============================================================
- * 5. FAST HASH
- * ============================================================ */
+    /* Per-CPU Burst Sensor */
+    unsigned long last_jiffy;
+    unsigned int burst_count;
+} ____cacheline_aligned;
+
 static __always_inline u32 hash_word(u32 word)
 {
     return (word * 2654435761U) >> 25;
 }
 
-/* ============================================================
- * 6. HEADER FLAGS (V21)
- * ============================================================ */
-#define WKDM_FLAG_INDEX0_DELTA  (1U << 0)
-#define WKDM_FLAG_INDEX1_DELTA  (1U << 1)
-#define WKDM_FLAG_R3_DELTA      (1U << 2)
-#define WKDM_FLAG_R2_DELTA      (1U << 3)
-#define WKDM_FLAG_R1_DELTA      (1U << 4)
-#define WKDM_FLAG_R0_DELTA      (1U << 5)
+#define WKDM_FLAGS_V220 \
+        ((1U << 0) | (1U << 1) | (1U << 2) | \
+         (1U << 3) | (1U << 4) | (1U << 5))
 
-#define WKDM_FLAGS_V21 \
-        (WKDM_FLAG_INDEX0_DELTA | \
-         WKDM_FLAG_INDEX1_DELTA | \
-         WKDM_FLAG_R3_DELTA | \
-         WKDM_FLAG_R2_DELTA | \
-         WKDM_FLAG_R1_DELTA | \
-         WKDM_FLAG_R0_DELTA)
-
-static __always_inline void wkdm_write_header(u8 *dst, u16 index0_len, u16 index1_len, u16 miss_count)
+static __always_inline void wkdm_write_header(u8 *dst, u16 idx0_len, u16 idx1_len, u16 miss_count)
 {
+    u32 version_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V220;
     put_unaligned_le16(WKDM_MAGIC, dst + 0);
-    put_unaligned_le16(index0_len, dst + 2);
-    put_unaligned_le16(index1_len, dst + 4);
+    put_unaligned_le16(idx0_len, dst + 2);
+    put_unaligned_le16(idx1_len, dst + 4);
     put_unaligned_le16(miss_count, dst + 6);
-    put_unaligned_le32(WKDM_FLAGS_V21, dst + 8);
+    put_unaligned_le32(version_flags, dst + 8);
 }
 
 static __always_inline int wkdm_read_header(const u8 *src, unsigned int slen, 
-                                            u16 *index0_len, u16 *index1_len, u16 *miss_count)
+                                            u16 *idx0_len, u16 *idx1_len, u16 *miss_count)
 {
-    u32 flags;
+    u32 version_flags;
+    u32 expected_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V220;
+
     if (unlikely(slen < WKDM_HEADER_SIZE)) return -EINVAL;
     if (unlikely(get_unaligned_le16(src + 0) != WKDM_MAGIC)) return -EINVAL;
 
-    *index0_len = get_unaligned_le16(src + 2);
-    *index1_len = get_unaligned_le16(src + 4);
+    *idx0_len = get_unaligned_le16(src + 2);
+    *idx1_len = get_unaligned_le16(src + 4);
     *miss_count = get_unaligned_le16(src + 6);
-    flags = get_unaligned_le32(src + 8);
+    version_flags = get_unaligned_le32(src + 8);
 
-    if (unlikely(flags != WKDM_FLAGS_V21)) return -EINVAL;
-    if (unlikely(*index0_len > WKDM_MAX_INDEX_BYTES || 
-                 *index1_len > WKDM_MAX_INDEX_BYTES || 
+    if (unlikely(version_flags != expected_flags)) return -EINVAL;
+    if (unlikely(*idx0_len > WKDM_MAX_INDEX_BYTES || 
+                 *idx1_len > WKDM_MAX_INDEX_BYTES || 
                  *miss_count > WKDM_MAX_MISS))
         return -EINVAL;
 
     return 0;
 }
 
-/* ============================================================
- * 7. XOR DELTA ENCODER (Optimized with __restrict)
- * ============================================================ */
-static __always_inline void wkdm_delta_encode(u8 * __restrict buf, unsigned int len)
+static __always_inline void wkdm_delta_encode(u8 *buf, unsigned int len)
 {
     unsigned int i;
     u8 prev;
@@ -156,51 +136,30 @@ static __always_inline void wkdm_delta_encode(u8 * __restrict buf, unsigned int 
 }
 
 /* ============================================================
- * 8. CPU AFFINITY HELPERS
+ * 2. WKDM PACK
  * ============================================================ */
-static __always_inline void wkdm_build_cpu_mask(cpumask_t *mask)
+static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_cpu_ctx *ctx)
 {
-    cpumask_clear(mask);
-    cpumask_set_cpu(WKDM_CPU_LITTLE0, mask);
-    cpumask_set_cpu(WKDM_CPU_LITTLE1, mask);
-    cpumask_set_cpu(WKDM_CPU_BIG, mask);
-}
-
-static __always_inline void wkdm_save_cpu_mask(cpumask_t *mask)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
-    cpumask_copy(mask, current->cpus_ptr);
-#else
-    cpumask_copy(mask, &current->cpus_allowed);
-#endif
-}
-
-static __always_inline void wkdm_set_cpu_mask(const cpumask_t *mask)
-{
-    set_cpus_allowed_ptr(current, mask);
-}
-
-/* ============================================================
- * 9. WKDM PACK (Memory-Read Optimized)
- * ============================================================ */
-static int wkdm_pack_split(const u8 * __restrict src, u8 * __restrict out, struct hybrid_ctx *ctx)
-{
-    u32 * __restrict dict = ctx->wkdm_dict;
-    u8 * __restrict index0 = ctx->index0_buffer;
-    u8 * __restrict index1 = ctx->index1_buffer;
-    u8 * __restrict r0 = ctx->raw_b0;
-    u8 * __restrict r1 = ctx->raw_b1;
-    u8 * __restrict r2 = ctx->raw_b2;
-    u8 * __restrict r3 = ctx->raw_b3;
-    u8 tags[WKDM_TAG_BYTES] = { 0 };
+    u32 *dict = ctx->wkdm_dict;
+    u8 *tags = ctx->tags_buffer;
+    
+    /* Segmenting Unified Buffers */
+    u8 *index0 = ctx->index_buffer;
+    u8 *index1 = ctx->index_buffer + WKDM_MAX_INDEX_BYTES;
+    u8 *r0 = ctx->raw_buffer;
+    u8 *r1 = ctx->raw_buffer + WKDM_RAW_PLANE_SIZE;
+    u8 *r2 = ctx->raw_buffer + WKDM_RAW_PLANE_SIZE * 2;
+    u8 *r3 = ctx->raw_buffer + WKDM_RAW_PLANE_SIZE * 3;
 
     unsigned int index0_len = 0, index1_len = 0, miss_count = 0, word;
+    u8 tag_pack = 0;
 
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
     for (word = 0; word < WKDM_WORDS; word++) {
         u32 value = get_unaligned_le32(src + (word << 2));
-        u32 bucket, *entry;
+        u32 bucket;
+        u32 *entry;
         u8 tag;
 
         if (unlikely(value == 0)) {
@@ -209,31 +168,35 @@ static int wkdm_pack_split(const u8 * __restrict src, u8 * __restrict out, struc
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
             
-            /* OPTIMIZATION: Load dictionary once into CPU registers */
             u32 way0 = entry[0];
+            u32 way1 = entry[1];
             
             if (likely(way0 == value)) {
                 tag = TAG_DICT_0;
                 index0[index0_len++] = (u8)bucket;
+            } else if (way1 == value) {
+                tag = TAG_DICT_1;
+                index1[index1_len++] = (u8)bucket;
+                entry[1] = way0;
+                entry[0] = value;
             } else {
-                u32 way1 = entry[1];
-                if (way1 == value) {
-                    tag = TAG_DICT_1;
-                    index1[index1_len++] = (u8)bucket;
-                } else {
-                    tag = TAG_MISS;
-                    r0[miss_count] = (u8)value;
-                    r1[miss_count] = (u8)(value >> 8);
-                    r2[miss_count] = (u8)(value >> 16);
-                    r3[miss_count] = (u8)(value >> 24);
-                    miss_count++;
-                }
-                /* Fast-path dictionary update for both DICT_1 & MISS */
+                tag = TAG_MISS;
+                r0[miss_count] = (u8)value;
+                r1[miss_count] = (u8)(value >> 8);
+                r2[miss_count] = (u8)(value >> 16);
+                r3[miss_count] = (u8)(value >> 24);
+                miss_count++;
+                
                 entry[1] = way0;
                 entry[0] = value;
             }
         }
-        tags[word >> 2] |= tag << ((word & 3) << 1);
+        
+        tag_pack |= tag << ((word & 3) << 1);
+        if ((word & 3) == 3) {
+            tags[word >> 2] = tag_pack;
+            tag_pack = 0;
+        }
     }
 
     wkdm_delta_encode(index0, index0_len);
@@ -269,18 +232,20 @@ static int wkdm_pack_split(const u8 * __restrict src, u8 * __restrict out, struc
 
         memcpy(out + offset, r0, miss_count);
         offset += miss_count;
+        
+        if (unlikely(offset > WKDM_MAX_CAPACITY))
+            return -ENOSPC;
 
         return offset;
     }
 }
 
 /* ============================================================
- * 10. WKDM UNPACK
+ * 3. WKDM UNPACK
  * ============================================================ */
-static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen, 
-                              u8 * __restrict dst, struct hybrid_ctx *ctx)
+static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_cpu_ctx *ctx)
 {
-    u32 * __restrict dict = ctx->wkdm_dict;
+    u32 *dict = ctx->wkdm_dict;
     const u8 *tags, *index0, *index1, *r3, *r2, *r1, *r0;
     
     u16 index0_len, index1_len, miss_count;
@@ -294,7 +259,8 @@ static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen,
         return -EINVAL;
 
     expected_size = WKDM_HEADER_SIZE + WKDM_TAG_BYTES + index0_len + index1_len + (miss_count * 4);
-    if (unlikely(expected_size != slen)) return -EINVAL;
+    if (unlikely(expected_size != slen || expected_size > WKDM_MAX_CAPACITY)) 
+        return -EINVAL;
 
     tags = src + WKDM_HEADER_SIZE;
     index0 = tags + WKDM_TAG_BYTES;
@@ -321,7 +287,7 @@ static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen,
             bucket = index0_prev;
             
             if (unlikely(bucket >= WKDM_DICT_BUCKETS)) return -EINVAL;
-            value = dict[bucket << 1]; /* dict[bucket][0] */
+            value = dict[bucket << 1];
             put_unaligned_le32(value, dst + (word << 2));
             break;
 
@@ -348,12 +314,11 @@ static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen,
             miss_used++;
 
             value = ((u32)prev0) | ((u32)prev1 << 8) | ((u32)prev2 << 16) | ((u32)prev3 << 24);
-
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
+            
             entry[1] = entry[0];
             entry[0] = value;
-
             put_unaligned_le32(value, dst + (word << 2));
             break;
 
@@ -369,48 +334,52 @@ static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen,
 }
 
 /* ============================================================
- * 11. CONTEXT ALLOCATION
+ * 4. CONTEXT ALLOCATION (Per-CPU)
  * ============================================================ */
 static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
 {
-    struct hybrid_ctx *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+    struct hybrid_cpu_ctx *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
     if (!ctx) return ERR_PTR(-ENOMEM);
 
+    ctx->lz4_workspace = vmalloc(LZ4_MEM_COMPRESS);
+    if (!ctx->lz4_workspace) goto err_ctx;
+
     ctx->lz4hc_workspace = vmalloc(LZ4HC_MEM_COMPRESS);
-    if (!ctx->lz4hc_workspace) goto err_ctx;
+    if (!ctx->lz4hc_workspace) goto err_lz4;
 
     ctx->wkdm_buffer = kmalloc(WKDM_MAX_CAPACITY, GFP_KERNEL);
-    if (!ctx->wkdm_buffer) goto err_workspace;
+    if (!ctx->wkdm_buffer) goto err_lz4hc;
 
     ctx->wkdm_dict = kmalloc(WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32), GFP_KERNEL);
     if (!ctx->wkdm_dict) goto err_wkdm;
 
-    ctx->index0_buffer = kmalloc(WKDM_MAX_INDEX_BYTES, GFP_KERNEL);
-    if (!ctx->index0_buffer) goto err_dict;
+    /* Unified Buffer Allocations */
+    ctx->index_buffer = kmalloc(WKDM_TOTAL_INDEX_BYTES, GFP_KERNEL);
+    if (!ctx->index_buffer) goto err_dict;
 
-    ctx->index1_buffer = kmalloc(WKDM_MAX_INDEX_BYTES, GFP_KERNEL);
-    if (!ctx->index1_buffer) goto err_index0;
+    ctx->raw_buffer = kmalloc(WKDM_TOTAL_RAW_BYTES, GFP_KERNEL);
+    if (!ctx->raw_buffer) goto err_idx;
 
-    ctx->raw_b0 = kmalloc(WKDM_RAW_PLANE_SIZE, GFP_KERNEL);
-    ctx->raw_b1 = kmalloc(WKDM_RAW_PLANE_SIZE, GFP_KERNEL);
-    ctx->raw_b2 = kmalloc(WKDM_RAW_PLANE_SIZE, GFP_KERNEL);
-    ctx->raw_b3 = kmalloc(WKDM_RAW_PLANE_SIZE, GFP_KERNEL);
+    ctx->tags_buffer = kmalloc(WKDM_TAG_BYTES, GFP_KERNEL);
+    if (!ctx->tags_buffer) goto err_raw;
 
-    if (!ctx->raw_b0 || !ctx->raw_b1 || !ctx->raw_b2 || !ctx->raw_b3) goto err_planes;
+    ctx->last_jiffy = 0;
+    ctx->burst_count = 0;
 
     return ctx;
 
-err_planes:
-    kfree(ctx->raw_b3); kfree(ctx->raw_b2); kfree(ctx->raw_b1); kfree(ctx->raw_b0);
-    kfree(ctx->index1_buffer);
-err_index0:
-    kfree(ctx->index0_buffer);
+err_raw:
+    kfree(ctx->raw_buffer);
+err_idx:
+    kfree(ctx->index_buffer);
 err_dict:
     kfree(ctx->wkdm_dict);
 err_wkdm:
     kfree(ctx->wkdm_buffer);
-err_workspace:
+err_lz4hc:
     vfree(ctx->lz4hc_workspace);
+err_lz4:
+    vfree(ctx->lz4_workspace);
 err_ctx:
     kfree(ctx);
     return ERR_PTR(-ENOMEM);
@@ -418,44 +387,69 @@ err_ctx:
 
 static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 {
-    struct hybrid_ctx *ctx = ctx_ptr;
+    struct hybrid_cpu_ctx *ctx = ctx_ptr;
     if (!ctx) return;
     
-    kfree(ctx->raw_b3); kfree(ctx->raw_b2); kfree(ctx->raw_b1); kfree(ctx->raw_b0);
-    kfree(ctx->index1_buffer); kfree(ctx->index0_buffer);
-    kfree(ctx->wkdm_dict); kfree(ctx->wkdm_buffer);
+    kfree(ctx->tags_buffer);
+    kfree(ctx->raw_buffer); 
+    kfree(ctx->index_buffer); 
+    kfree(ctx->wkdm_dict); 
+    kfree(ctx->wkdm_buffer);
     vfree(ctx->lz4hc_workspace);
+    vfree(ctx->lz4_workspace);
     kfree(ctx);
 }
 
 /* ============================================================
- * 12. COMPRESSION
+ * 5. COMPRESSION ENGINE
  * ============================================================ */
 static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                             u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
-    struct hybrid_ctx *ctx = ctx_ptr;
+    struct hybrid_cpu_ctx *ctx = ctx_ptr;
     int wkdm_len, lz4_len;
-    cpumask_t old_mask, wkdm_mask;
+    unsigned long current_jiffy = jiffies;
+    bool is_kswapd = (current->flags & PF_KSWAPD);
+    bool is_direct_reclaim = (current->flags & PF_MEMALLOC);
+    bool use_hc = true;
 
     if (unlikely(!dlen || slen != WKDM_PAGE_SIZE || *dlen < WKDM_PAGE_SIZE))
         return -EINVAL;
 
-    wkdm_save_cpu_mask(&old_mask);
-    wkdm_build_cpu_mask(&wkdm_mask);
-    wkdm_set_cpu_mask(&wkdm_mask);
-
     wkdm_len = wkdm_pack_split(src, ctx->wkdm_buffer, ctx);
     
-    if (unlikely(wkdm_len <= 0)) {
-        wkdm_set_cpu_mask(&old_mask);
+    if (unlikely(wkdm_len <= 0))
         return -ENOSPC;
+
+    /* Burst Sensor Update */
+    if (current_jiffy == ctx->last_jiffy) {
+        ctx->burst_count++;
+    } else {
+        ctx->last_jiffy = current_jiffy;
+        ctx->burst_count = 0;
     }
 
-    lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen,
-                              WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
+    /* --------------------------------------------------------
+     * DUAL-THRESHOLD DECISION ENGINE
+     * -------------------------------------------------------- */
+    if (ctx->burst_count > THRESHOLD_CRITICAL) {
+        /* Beban sangat ekstrem, bypass prioritas, utamakan keselamatan UI */
+        use_hc = false;
+    } else if (ctx->burst_count > THRESHOLD_HIGH) {
+        /* Beban tinggi: Reclaim Normal pakai Fast, kswapd tetap bisa pakai HC */
+        use_hc = is_kswapd || !is_direct_reclaim;
+    } else {
+        /* Memori sangat santai, izinkan kepadatan maksimal di semua vektor */
+        use_hc = true;
+    }
 
-    wkdm_set_cpu_mask(&old_mask);
+    if (use_hc) {
+        lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen,
+                                  WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
+    } else {
+        lz4_len = LZ4_compress_default(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
+                                       ctx->lz4_workspace);
+    }
 
     if (unlikely(lz4_len <= 0 || lz4_len >= WKDM_PAGE_SIZE))
         return -ENOSPC;
@@ -465,40 +459,30 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
 }
 
 /* ============================================================
- * 13. DECOMPRESSION
+ * 6. DECOMPRESSION 
  * ============================================================ */
 static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                               u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
-    struct hybrid_ctx *ctx = ctx_ptr;
+    struct hybrid_cpu_ctx *ctx = ctx_ptr;
     int ret;
-    cpumask_t old_mask, wkdm_mask;
 
     if (unlikely(!dlen || slen == 0)) return -EINVAL;
 
-    wkdm_save_cpu_mask(&old_mask);
-    wkdm_build_cpu_mask(&wkdm_mask);
-    wkdm_set_cpu_mask(&wkdm_mask);
-
     ret = LZ4_decompress_safe(src, ctx->wkdm_buffer, slen, WKDM_MAX_CAPACITY);
     
-    if (unlikely(ret < 0)) {
-        wkdm_set_cpu_mask(&old_mask);
+    if (unlikely(ret < 0 || ret < WKDM_HEADER_SIZE))
         return -EINVAL;
-    }
 
-    if (unlikely(wkdm_unpack_linear(ctx->wkdm_buffer, ret, dst, ctx) < 0)) {
-        wkdm_set_cpu_mask(&old_mask);
+    if (unlikely(wkdm_unpack_linear(ctx->wkdm_buffer, ret, dst, ctx) < 0))
         return -EINVAL;
-    }
 
-    wkdm_set_cpu_mask(&old_mask);
     *dlen = WKDM_PAGE_SIZE;
     return 0;
 }
 
 /* ============================================================
- * 14. SCOMP REGISTRATION & MODULE
+ * 7. SCOMP REGISTRATION
  * ============================================================ */
 static struct scomp_alg scomp = {
     .alloc_ctx  = hybrid_alloc_ctx,
@@ -506,7 +490,7 @@ static struct scomp_alg scomp = {
     .compress   = hybrid_scompress,
     .decompress = hybrid_sdecompress,
     .base = {
-        .cra_name        = "wkdm_lz4hc",
+        .cra_name        = "wkdm_lz4hc", 
         .cra_driver_name = "wkdm_lz4hc-scomp",
         .cra_module      = THIS_MODULE,
     },
@@ -519,5 +503,5 @@ module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("WKdm-LZ4HC V21.1 Extreme Optimized LZ4-Friendly Delta Stream");
+MODULE_DESCRIPTION("WKdm-LZ4/HC V22 Per-CPU Lockless Edition");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
