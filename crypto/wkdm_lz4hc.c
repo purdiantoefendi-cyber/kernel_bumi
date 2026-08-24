@@ -1,16 +1,32 @@
 /*
  * Cryptographic API.
  *
- * WKdm-LZ4/HC V22 Per-CPU Lockless Edition
+ * WKdm-LZ4/HC V25.1 The Invariant Architecture (Pure WKdm)
  *
  * ============================================================
- * V22 ARCHITECTURE & FEATURES
+ * V25.1 ARCHITECTURE & CONSCIOUS TRADE-OFFS
  * ------------------------------------------------------------
- * - PER-CPU CONTEXT: Unified buffer allocations to minimize fragmentation.
- * - TRUE RECLAIM DETECTION: Accurate PF_MEMALLOC & PF_KSWAPD parsing.
- * - DUAL-THRESHOLD ENGINE: Dynamically scales compression based on 
- *   precise CPU memory traffic pacing.
- * - ZERO SHARED MUTABLE STATE: Completely lockless execution.
+ * 1. PURE INVARIANT PIPELINE: Every page strictly follows the 
+ *    Page -> WKdm -> LZ4 -> Output path. No RAW bypass, no 
+ *    ambiguous framing bytes. The decoder assumes absolute 
+ *    LZ4(WKdm(Page)) invariant format.
+ * 
+ * 2. EARLY ABORT: Incompressible data (>896 MISS) returns -ENOSPC 
+ *    before LZ4 is called, saving massive CPU cycles gracefully.
+ * 
+ * 3. SMART KSWAPD: kswapd uses LZ4HC-12, but yields to Fast during 
+ *    critical memory burst traffic to prevent allocator stalls.
+ * 
+ * 4. [FIXED] BURST SENSOR & PARITY TRAP:
+ *    Uses an exponential-decay counter (halving per jiffy elapsed).
+ *    Thresholds (37/17) represent steady-state calls/jiffy. Actual 
+ *    wall-clock translation depends strictly on kernel HZ configuration. 
+ *    Zero-reset applied for long idles to clear residual loads.
+ * 
+ * 5. DICT SAFETY: Hash shift decoupled via log2(buckets).
+ *    Strict BUILD_BUG_ON ensures WKDM_DICT_BITS <= 8 to prevent 
+ *    silent (u8) cast overflows during dictionary indexing.
+ * ============================================================
  */
 
 #include <linux/init.h>
@@ -22,19 +38,25 @@
 #include <linux/sched.h>
 #include <linux/cache.h>
 #include <linux/jiffies.h>
+#include <linux/bug.h>
+#include <linux/limits.h>
 #include <crypto/internal/scompress.h>
 #include <asm/unaligned.h>
 
 #define WKDM_PAGE_SIZE          4096
 #define WKDM_WORDS              1024
-#define WKDM_DICT_BUCKETS       128
+
+#define WKDM_DICT_BITS          7
+#define WKDM_DICT_BUCKETS       (1U << WKDM_DICT_BITS)
 #define WKDM_DICT_WAYS          2
+
 #define WKDM_TAG_BYTES          (WKDM_WORDS / 4)
 #define WKDM_MAX_INDEX_BYTES    WKDM_WORDS
 #define WKDM_MAX_MISS           WKDM_WORDS
 #define WKDM_RAW_PLANE_SIZE     WKDM_MAX_MISS
 
-/* Unified Buffer Sizes */
+#define WKDM_EARLY_ABORT_MISS   896 
+
 #define WKDM_TOTAL_RAW_BYTES    (WKDM_RAW_PLANE_SIZE * 4)
 #define WKDM_TOTAL_INDEX_BYTES  (WKDM_MAX_INDEX_BYTES * 2)
 
@@ -47,49 +69,50 @@
 
 #define WKDM_LZ4HC_LEVEL        12
 #define WKDM_MAGIC              0x3157
-#define WKDM_STREAM_VERSION     220
+#define WKDM_STREAM_VERSION     251
 
-/* DYNAMIC CPU LOAD THRESHOLDS */
-#define THRESHOLD_CRITICAL      75
-#define THRESHOLD_HIGH          35
+/* Decay-domain steady-state thresholds */
+#define WKDM_COMPRESS_RATE_CRITICAL 37
+#define WKDM_COMPRESS_RATE_HIGH     17
+#define WKDM_DECAY_MAX_SHIFT        8
 
 #define TAG_ZERO                0x00
 #define TAG_DICT_0              0x01
 #define TAG_DICT_1              0x02
 #define TAG_MISS                0x03
 
-/* ============================================================
- * 1. CPU-LOCAL CONTEXT (Lockless)
- * ============================================================ */
-struct hybrid_cpu_ctx {
+/*
+ * Per-stream/context mutable state.
+ * Concurrency isolation is provided by the caller's 
+ * crypto_scomp context lifecycle (e.g., ZRAM per-CPU streams).
+ */
+struct hybrid_ctx {
     void *lz4_workspace;
     void *lz4hc_workspace;
     
     u8 *wkdm_buffer;
     u32 *wkdm_dict;
     
-    /* Unified Allocations */
     u8 *index_buffer; 
     u8 *raw_buffer;
     u8 *tags_buffer;
 
-    /* Per-CPU Burst Sensor */
     unsigned long last_jiffy;
-    unsigned int burst_count;
+    u16 burst_count;
 } ____cacheline_aligned;
 
 static __always_inline u32 hash_word(u32 word)
 {
-    return (word * 2654435761U) >> 25;
+    return (word * 2654435761U) >> (32 - WKDM_DICT_BITS);
 }
 
-#define WKDM_FLAGS_V220 \
+#define WKDM_FLAGS_V251 \
         ((1U << 0) | (1U << 1) | (1U << 2) | \
          (1U << 3) | (1U << 4) | (1U << 5))
 
 static __always_inline void wkdm_write_header(u8 *dst, u16 idx0_len, u16 idx1_len, u16 miss_count)
 {
-    u32 version_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V220;
+    u32 version_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V251;
     put_unaligned_le16(WKDM_MAGIC, dst + 0);
     put_unaligned_le16(idx0_len, dst + 2);
     put_unaligned_le16(idx1_len, dst + 4);
@@ -101,7 +124,7 @@ static __always_inline int wkdm_read_header(const u8 *src, unsigned int slen,
                                             u16 *idx0_len, u16 *idx1_len, u16 *miss_count)
 {
     u32 version_flags;
-    u32 expected_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V220;
+    u32 expected_flags = (WKDM_STREAM_VERSION << 16) | WKDM_FLAGS_V251;
 
     if (unlikely(slen < WKDM_HEADER_SIZE)) return -EINVAL;
     if (unlikely(get_unaligned_le16(src + 0) != WKDM_MAGIC)) return -EINVAL;
@@ -135,15 +158,28 @@ static __always_inline void wkdm_delta_encode(u8 *buf, unsigned int len)
     }
 }
 
-/* ============================================================
- * 2. WKDM PACK
- * ============================================================ */
-static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_cpu_ctx *ctx)
+static __always_inline void wkdm_update_burst(struct hybrid_ctx *ctx, unsigned long now)
+{
+    unsigned long delta = now - ctx->last_jiffy; 
+
+    if (delta) {
+        if (delta >= WKDM_DECAY_MAX_SHIFT)
+            ctx->burst_count = 0;
+        else
+            ctx->burst_count >>= delta;
+
+        ctx->last_jiffy = now;
+    }
+
+    if (ctx->burst_count < U16_MAX)
+        ctx->burst_count++;
+}
+
+static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
 {
     u32 *dict = ctx->wkdm_dict;
     u8 *tags = ctx->tags_buffer;
     
-    /* Segmenting Unified Buffers */
     u8 *index0 = ctx->index_buffer;
     u8 *index1 = ctx->index_buffer + WKDM_MAX_INDEX_BYTES;
     u8 *r0 = ctx->raw_buffer;
@@ -194,6 +230,10 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_cpu_ctx *ctx)
         
         tag_pack |= tag << ((word & 3) << 1);
         if ((word & 3) == 3) {
+            /* EARLY ABORT: Incompressible data guard */
+            if (unlikely(miss_count > WKDM_EARLY_ABORT_MISS))
+                return -ENOSPC;
+
             tags[word >> 2] = tag_pack;
             tag_pack = 0;
         }
@@ -240,10 +280,7 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_cpu_ctx *ctx)
     }
 }
 
-/* ============================================================
- * 3. WKDM UNPACK
- * ============================================================ */
-static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_cpu_ctx *ctx)
+static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx *ctx)
 {
     u32 *dict = ctx->wkdm_dict;
     const u8 *tags, *index0, *index1, *r3, *r2, *r1, *r0;
@@ -333,18 +370,15 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
     return 0;
 }
 
-/* ============================================================
- * 4. CONTEXT ALLOCATION (Per-CPU)
- * ============================================================ */
 static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
 {
-    struct hybrid_cpu_ctx *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+    struct hybrid_ctx *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
     if (!ctx) return ERR_PTR(-ENOMEM);
 
-    ctx->lz4_workspace = vmalloc(LZ4_MEM_COMPRESS);
+    ctx->lz4_workspace = vmalloc(LZ4_sizeofState());
     if (!ctx->lz4_workspace) goto err_ctx;
 
-    ctx->lz4hc_workspace = vmalloc(LZ4HC_MEM_COMPRESS);
+    ctx->lz4hc_workspace = vmalloc(LZ4_sizeofStateHC());
     if (!ctx->lz4hc_workspace) goto err_lz4;
 
     ctx->wkdm_buffer = kmalloc(WKDM_MAX_CAPACITY, GFP_KERNEL);
@@ -353,7 +387,6 @@ static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
     ctx->wkdm_dict = kmalloc(WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32), GFP_KERNEL);
     if (!ctx->wkdm_dict) goto err_wkdm;
 
-    /* Unified Buffer Allocations */
     ctx->index_buffer = kmalloc(WKDM_TOTAL_INDEX_BYTES, GFP_KERNEL);
     if (!ctx->index_buffer) goto err_dict;
 
@@ -363,7 +396,7 @@ static void *hybrid_alloc_ctx(struct crypto_scomp *tfm)
     ctx->tags_buffer = kmalloc(WKDM_TAG_BYTES, GFP_KERNEL);
     if (!ctx->tags_buffer) goto err_raw;
 
-    ctx->last_jiffy = 0;
+    ctx->last_jiffy = jiffies;
     ctx->burst_count = 0;
 
     return ctx;
@@ -387,7 +420,7 @@ err_ctx:
 
 static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 {
-    struct hybrid_cpu_ctx *ctx = ctx_ptr;
+    struct hybrid_ctx *ctx = ctx_ptr;
     if (!ctx) return;
     
     kfree(ctx->tags_buffer);
@@ -400,51 +433,44 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
     kfree(ctx);
 }
 
-/* ============================================================
- * 5. COMPRESSION ENGINE
- * ============================================================ */
 static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                             u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
-    struct hybrid_cpu_ctx *ctx = ctx_ptr;
+    struct hybrid_ctx *ctx = ctx_ptr;
     int wkdm_len, lz4_len;
-    unsigned long current_jiffy = jiffies;
-    bool is_kswapd = (current->flags & PF_KSWAPD);
-    bool is_direct_reclaim = (current->flags & PF_MEMALLOC);
-    bool use_hc = true;
+    unsigned long now = jiffies;
+    
+    bool is_kswapd;
+    bool is_memalloc; 
+    bool use_hc;
 
     if (unlikely(!dlen || slen != WKDM_PAGE_SIZE || *dlen < WKDM_PAGE_SIZE))
         return -EINVAL;
 
+    wkdm_update_burst(ctx, now);
+
+    is_kswapd = !!(current->flags & PF_KSWAPD);
+    is_memalloc = !!(current->flags & PF_MEMALLOC);
+
+    /* WKdm is ALWAYS mandatory */
     wkdm_len = wkdm_pack_split(src, ctx->wkdm_buffer, ctx);
     
     if (unlikely(wkdm_len <= 0))
-        return -ENOSPC;
+        return -ENOSPC; 
 
-    /* Burst Sensor Update */
-    if (current_jiffy == ctx->last_jiffy) {
-        ctx->burst_count++;
-    } else {
-        ctx->last_jiffy = current_jiffy;
-        ctx->burst_count = 0;
-    }
-
-    /* --------------------------------------------------------
-     * DUAL-THRESHOLD DECISION ENGINE
-     * -------------------------------------------------------- */
-    if (ctx->burst_count > THRESHOLD_CRITICAL) {
-        /* Beban sangat ekstrem, bypass prioritas, utamakan keselamatan UI */
+    /* Decision engine only controls LZ4 stage */
+    if (ctx->burst_count >= WKDM_COMPRESS_RATE_CRITICAL) {
         use_hc = false;
-    } else if (ctx->burst_count > THRESHOLD_HIGH) {
-        /* Beban tinggi: Reclaim Normal pakai Fast, kswapd tetap bisa pakai HC */
-        use_hc = is_kswapd || !is_direct_reclaim;
+    } else if (is_kswapd) {
+        use_hc = true;
+    } else if (is_memalloc && ctx->burst_count >= WKDM_COMPRESS_RATE_HIGH) {
+        use_hc = false;
     } else {
-        /* Memori sangat santai, izinkan kepadatan maksimal di semua vektor */
         use_hc = true;
     }
 
     if (use_hc) {
-        lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen,
+        lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
                                   WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
     } else {
         lz4_len = LZ4_compress_default(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
@@ -458,20 +484,17 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     return 0;
 }
 
-/* ============================================================
- * 6. DECOMPRESSION 
- * ============================================================ */
 static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned int slen,
                               u8 *dst, unsigned int *dlen, void *ctx_ptr)
 {
-    struct hybrid_cpu_ctx *ctx = ctx_ptr;
+    struct hybrid_ctx *ctx = ctx_ptr;
     int ret;
 
     if (unlikely(!dlen || slen == 0)) return -EINVAL;
 
     ret = LZ4_decompress_safe(src, ctx->wkdm_buffer, slen, WKDM_MAX_CAPACITY);
     
-    if (unlikely(ret < 0 || ret < WKDM_HEADER_SIZE))
+    if (unlikely(ret < WKDM_HEADER_SIZE))
         return -EINVAL;
 
     if (unlikely(wkdm_unpack_linear(ctx->wkdm_buffer, ret, dst, ctx) < 0))
@@ -481,9 +504,6 @@ static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned 
     return 0;
 }
 
-/* ============================================================
- * 7. SCOMP REGISTRATION
- * ============================================================ */
 static struct scomp_alg scomp = {
     .alloc_ctx  = hybrid_alloc_ctx,
     .free_ctx   = hybrid_free_ctx,
@@ -496,12 +516,17 @@ static struct scomp_alg scomp = {
     },
 };
 
-static int __init wkdm_lz4hc_mod_init(void) { return crypto_register_scomp(&scomp); }
+static int __init wkdm_lz4hc_mod_init(void) 
+{ 
+    BUILD_BUG_ON(WKDM_DICT_BITS > 8);
+    return crypto_register_scomp(&scomp); 
+}
+
 static void __exit wkdm_lz4hc_mod_fini(void) { crypto_unregister_scomp(&scomp); }
 
 module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("WKdm-LZ4/HC V22 Per-CPU Lockless Edition");
+MODULE_DESCRIPTION("WKdm-LZ4/HC V25.1 The Invariant Architecture (Pure WKdm)");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
