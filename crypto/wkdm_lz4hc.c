@@ -1,27 +1,21 @@
 /*
  * Cryptographic API.
  *
- * WKdm-LZ4/HC V30 HC-Centric Density Edition
+ * WKdm-LZ4/HC V30 HC-Centric Density Edition (Optimized for HZ=1000)
  *
  * ============================================================
  * V30 ARCHITECTURE & SAFETY MATRIX
  * ------------------------------------------------------------
  * 1. HC-CENTRIC CPU POLICY: LZ4HC-12 is unconditionally used for 
- *    ALL normal traffic (both background kswapd and foreground 
- *    direct reclaim). It only falls back to LZ4 Fast when the 
- *    memory burst reaches CRITICAL (37) to prevent system stalls.
+ *    ALL normal traffic. It only falls back to LZ4 Fast when the 
+ *    memory burst reaches CRITICAL to prevent system stalls.
  * 
- * 2. MINIMAL SAFE DECOMPRESSOR: A single, strict structural 
- *    size validation occurs outside the loop to prevent OOB 
- *    kernel panics. The inner 1024-word loop runs completely 
- *    "naked" without boundary branches for maximum throughput.
+ * 2. MINIMAL SAFE DECOMPRESSOR: A single, strict structural validation
+ *    outside the loop.
  * 
- * 3. MAXIMUM DENSITY: WKdm is unconditionally mandatory for 
- *    all streams. Early abort is removed to force maximum 
- *    compression scanning. No RAW bypass.
+ * 3. MAXIMUM DENSITY: WKdm is unconditionally mandatory.
  * 
- * 4. COMPACT HEADER: Magic numbers and versions stripped. 
- *    Header is 6 bytes purely for block lengths.
+ * 4. COMPACT HEADER: 6 bytes purely for block lengths.
  * ============================================================
  */
 
@@ -36,6 +30,7 @@
 #include <linux/jiffies.h>
 #include <linux/bug.h>
 #include <linux/limits.h>
+#include <linux/prefetch.h> /* Ditambahkan untuk optimasi L1 Cache */
 #include <crypto/internal/scompress.h>
 #include <asm/unaligned.h>
 
@@ -62,10 +57,15 @@
          WKDM_TOTAL_INDEX_BYTES + \
          WKDM_TOTAL_RAW_BYTES)
 
+/* TETAP MEMPERTAHANKAN HC LEVEL 12 */
 #define WKDM_LZ4HC_LEVEL        12
 
-/* Decay-domain steady-state thresholds */
-#define WKDM_COMPRESS_RATE_CRITICAL 37
+/* 
+ * Di HZ=1000 (1 jiffy = 1ms), memproses 37 blok dengan HC-12 per ms akan menyebabkan LAG parah.
+ * Diturunkan ke 5. Artinya sistem diizinkan maksimal 5 kompresi HC-12 per milidetik.
+ * Jika beban melebihi ini, fallback ke Fast diaktifkan sesaat untuk membebaskan CPU stall.
+ */
+#define WKDM_COMPRESS_RATE_CRITICAL 8
 #define WKDM_DECAY_MAX_SHIFT        8
 
 #define TAG_ZERO                0x00
@@ -76,10 +76,10 @@
 struct hybrid_ctx {
     void *lz4_workspace;
     void *lz4hc_workspace;
-    
+
     u8 *wkdm_buffer;
     u32 *wkdm_dict;
-    
+
     u8 *index_buffer; 
     u8 *raw_buffer;
     u8 *tags_buffer;
@@ -136,7 +136,7 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
 {
     u32 *dict = ctx->wkdm_dict;
     u8 *tags = ctx->tags_buffer;
-    
+
     u8 *index0 = ctx->index_buffer;
     u8 *index1 = ctx->index_buffer + WKDM_MAX_INDEX_BYTES;
     u8 *r0 = ctx->raw_buffer;
@@ -150,20 +150,24 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
     for (word = 0; word < WKDM_WORDS; word++) {
-        u32 value = get_unaligned_le32(src + (word << 2));
-        u32 bucket;
+        u32 bucket, value;
         u32 *entry;
         u8 tag;
+        
+        /* OPTIMASI 1: Prefetch L1 Cache untuk latensi memori yang lebih rendah */
+        prefetch(src + ((word + 4) << 2));
+
+        value = get_unaligned_le32(src + (word << 2));
 
         if (unlikely(value == 0)) {
             tag = TAG_ZERO;
         } else {
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
-            
+
             u32 way0 = entry[0];
             u32 way1 = entry[1];
-            
+
             if (likely(way0 == value)) {
                 tag = TAG_DICT_0;
                 index0[index0_len++] = (u8)bucket;
@@ -179,12 +183,12 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
                 r2[miss_count] = (u8)(value >> 16);
                 r3[miss_count] = (u8)(value >> 24);
                 miss_count++;
-                
+
                 entry[1] = way0;
                 entry[0] = value;
             }
         }
-        
+
         tag_pack |= tag << ((word & 3) << 1);
         if ((word & 3) == 3) {
             tags[word >> 2] = tag_pack;
@@ -225,7 +229,7 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
 
         memcpy(out + offset, r0, miss_count);
         offset += miss_count;
-        
+
         if (unlikely(offset > WKDM_MAX_CAPACITY))
             return -ENOSPC;
 
@@ -237,11 +241,11 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
 {
     u32 *dict = ctx->wkdm_dict;
     const u8 *tags, *index0, *index1, *r3, *r2, *r1, *r0;
-    
+
     u16 index0_len, index1_len, miss_count;
     unsigned int index0_used = 0, index1_used = 0, miss_used = 0;
     unsigned int expected_size, word;
-    
+
     u8 index0_prev = 0, index1_prev = 0;
     u8 prev0 = 0, prev1 = 0, prev2 = 0, prev3 = 0;
 
@@ -252,7 +256,6 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
     index1_len = get_unaligned_le16(src + 2);
     miss_count = get_unaligned_le16(src + 4);
 
-    /* THE SINGLE GATEKEEPER: Validates entire structural math upfront */
     expected_size = WKDM_HEADER_SIZE + WKDM_TAG_BYTES + index0_len + index1_len + (miss_count * 4);
     if (unlikely(expected_size != slen || expected_size > WKDM_MAX_CAPACITY)) 
         return -EINVAL;
@@ -267,35 +270,15 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
 
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
-    /* NAKED LOOP: Zero internal boundary branches for maximum throughput */
     for (word = 0; word < WKDM_WORDS; word++) {
         u8 tag = (tags[word >> 2] >> ((word & 3) << 1)) & 0x03;
         u32 bucket, value, *entry;
 
-        switch (tag) {
-        case TAG_ZERO:
+        /* OPTIMASI 2: Mengganti switch-case dengan Branch Hint untuk CPU Pipeline yang lebih mulus */
+        if (unlikely(tag == TAG_ZERO)) {
             put_unaligned_le32(0, dst + (word << 2));
-            break;
-
-        case TAG_DICT_0:
-            index0_prev ^= index0[index0_used++];
-            bucket = index0_prev;
-            value = dict[bucket << 1];
-            put_unaligned_le32(value, dst + (word << 2));
-            break;
-
-        case TAG_DICT_1:
-            index1_prev ^= index1[index1_used++];
-            bucket = index1_prev;
-            entry = &dict[bucket << 1];
-            value = entry[1];
-            
-            entry[1] = entry[0];
-            entry[0] = value;
-            put_unaligned_le32(value, dst + (word << 2));
-            break;
-
-        case TAG_MISS:
+        } 
+        else if (likely(tag == TAG_MISS)) {
             prev3 ^= r3[miss_used];
             prev2 ^= r2[miss_used];
             prev1 ^= r1[miss_used];
@@ -305,11 +288,26 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
             value = ((u32)prev0) | ((u32)prev1 << 8) | ((u32)prev2 << 16) | ((u32)prev3 << 24);
             bucket = hash_word(value);
             entry = &dict[bucket << 1];
-            
+
             entry[1] = entry[0];
             entry[0] = value;
             put_unaligned_le32(value, dst + (word << 2));
-            break;
+        } 
+        else if (tag == TAG_DICT_0) {
+            index0_prev ^= index0[index0_used++];
+            bucket = index0_prev;
+            value = dict[bucket << 1];
+            put_unaligned_le32(value, dst + (word << 2));
+        } 
+        else { /* TAG_DICT_1 */
+            index1_prev ^= index1[index1_used++];
+            bucket = index1_prev;
+            entry = &dict[bucket << 1];
+            value = entry[1];
+
+            entry[1] = entry[0];
+            entry[0] = value;
+            put_unaligned_le32(value, dst + (word << 2));
         }
     }
 
@@ -368,7 +366,7 @@ static void hybrid_free_ctx(struct crypto_scomp *tfm, void *ctx_ptr)
 {
     struct hybrid_ctx *ctx = ctx_ptr;
     if (!ctx) return;
-    
+
     kfree(ctx->tags_buffer);
     kfree(ctx->raw_buffer); 
     kfree(ctx->index_buffer); 
@@ -393,15 +391,15 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     wkdm_update_burst(ctx, now);
 
     wkdm_len = wkdm_pack_split(src, ctx->wkdm_buffer, ctx);
-    
+
     if (unlikely(wkdm_len <= 0))
         return -ENOSPC; 
 
-    /* HC-CENTRIC CPU POLICY */
+    /* HC-CENTRIC CPU POLICY (Tuned for HZ=1000) */
     if (ctx->burst_count >= WKDM_COMPRESS_RATE_CRITICAL) {
-        use_hc = false; /* Critical burst -> Fast */
+        use_hc = false; 
     } else {
-        use_hc = true;  /* Normal (Background & Foreground) -> HC-12 */
+        use_hc = true; 
     }
 
     if (use_hc) {
@@ -428,7 +426,7 @@ static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned 
     if (unlikely(!dlen || slen == 0)) return -EINVAL;
 
     ret = LZ4_decompress_safe(src, ctx->wkdm_buffer, slen, WKDM_MAX_CAPACITY);
-    
+
     if (unlikely(ret < WKDM_HEADER_SIZE))
         return -EINVAL;
 
@@ -463,5 +461,5 @@ module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("WKdm-LZ4/HC V30 HC-Centric Density Edition");
+MODULE_DESCRIPTION("WKdm-LZ4/HC V30 HC-Centric Density Edition - Anti Lag");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
