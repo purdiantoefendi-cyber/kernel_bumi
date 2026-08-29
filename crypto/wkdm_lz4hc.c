@@ -1,20 +1,17 @@
 /*
  * Cryptographic API.
  *
- * WKdm-LZ4/HC V30 HC-Centric Density Edition (Optimized for HZ=1000)
+ * WKdm-LZ4/HC V30 HC-Centric Density Edition 
+ * (Maximized Compression - ARM64 Optimized for HZ=1000)
  *
  * ============================================================
  * V30 ARCHITECTURE & SAFETY MATRIX
  * ------------------------------------------------------------
  * 1. HC-CENTRIC CPU POLICY: LZ4HC-12 is unconditionally used for 
- *    ALL normal traffic. It only falls back to LZ4 Fast when the 
- *    memory burst reaches CRITICAL to prevent system stalls.
- * 
- * 2. MINIMAL SAFE DECOMPRESSOR: A single, strict structural validation
- *    outside the loop.
- * 
+ *    ALL normal traffic. Falls back to LZ4 Fast when burst reaches
+ *    CRITICAL to prevent severe system stalls.
+ * 2. MINIMAL SAFE DECOMPRESSOR: Strict validation outside loop.
  * 3. MAXIMUM DENSITY: WKdm is unconditionally mandatory.
- * 
  * 4. COMPACT HEADER: 6 bytes purely for block lengths.
  * ============================================================
  */
@@ -30,9 +27,19 @@
 #include <linux/jiffies.h>
 #include <linux/bug.h>
 #include <linux/limits.h>
-#include <linux/prefetch.h> /* Ditambahkan untuk optimasi L1 Cache */
+#include <linux/prefetch.h>
+#include <linux/compiler.h>
 #include <crypto/internal/scompress.h>
 #include <asm/unaligned.h>
+
+/* Macro Optimasi Loop Multi-Compiler (GCC & Clang) */
+#if defined(__clang__)
+    #define PRAGMA_UNROLL_4 _Pragma("unroll 4")
+#elif defined(__GNUC__) && __GNUC__ >= 8
+    #define PRAGMA_UNROLL_4 _Pragma("GCC unroll 4")
+#else
+    #define PRAGMA_UNROLL_4
+#endif
 
 #define WKDM_PAGE_SIZE          4096
 #define WKDM_WORDS              1024
@@ -49,7 +56,6 @@
 #define WKDM_TOTAL_RAW_BYTES    (WKDM_RAW_PLANE_SIZE * 4)
 #define WKDM_TOTAL_INDEX_BYTES  (WKDM_MAX_INDEX_BYTES * 2)
 
-/* Compact Header (6 Bytes): idx0_len (2), idx1_len (2), miss_count (2) */
 #define WKDM_HEADER_SIZE        6
 #define WKDM_MAX_CAPACITY       \
         (WKDM_HEADER_SIZE +     \
@@ -57,13 +63,12 @@
          WKDM_TOTAL_INDEX_BYTES + \
          WKDM_TOTAL_RAW_BYTES)
 
-/* TETAP MEMPERTAHANKAN HC LEVEL 12 */
+/* TARGET: Kepadatan Ekstrem LZ4HC-12 */
 #define WKDM_LZ4HC_LEVEL        12
 
 /* 
- * Di HZ=1000 (1 jiffy = 1ms), memproses 37 blok dengan HC-12 per ms akan menyebabkan LAG parah.
- * Diturunkan ke 5. Artinya sistem diizinkan maksimal 5 kompresi HC-12 per milidetik.
- * Jika beban melebihi ini, fallback ke Fast diaktifkan sesaat untuk membebaskan CPU stall.
+ * CRITICAL 25: Memaksa CPU menelan ~100KB dengan HC-12 per jiffy.
+ * Menghasilkan kompresi super padat dengan toleransi micro-stutter.
  */
 #define WKDM_COMPRESS_RATE_CRITICAL 25
 #define WKDM_DECAY_MAX_SHIFT        8
@@ -100,18 +105,20 @@ static __always_inline void wkdm_write_header(u8 *dst, u16 idx0_len, u16 idx1_le
     put_unaligned_le16(miss_count, dst + 4);
 }
 
+/* OPTIMASI: Pointer Arithmetic untuk Delta Encoding (Lebih Cepat di ARM) */
 static __always_inline void wkdm_delta_encode(u8 *buf, unsigned int len)
 {
-    unsigned int i;
-    u8 prev;
-
     if (unlikely(len <= 1)) return;
+    
+    u8 *p = buf + 1;
+    u8 *end = buf + len;
+    u8 prev = buf[0];
 
-    prev = buf[0];
-    for (i = 1; i < len; i++) {
-        u8 cur = buf[i];
-        buf[i] = cur ^ prev;
+    while (p < end) {
+        u8 cur = *p;
+        *p = cur ^ prev;
         prev = cur;
+        p++;
     }
 }
 
@@ -132,7 +139,8 @@ static __always_inline void wkdm_update_burst(struct hybrid_ctx *ctx, unsigned l
         ctx->burst_count++;
 }
 
-static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
+/* OPTIMASI: Keyword __restrict memberi tahu compiler bahwa pointer memori tidak tumpang tindih */
+static int wkdm_pack_split(const u8 * __restrict src, u8 * __restrict out, struct hybrid_ctx *ctx)
 {
     u32 *dict = ctx->wkdm_dict;
     u8 *tags = ctx->tags_buffer;
@@ -144,17 +152,19 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
     u8 *r2 = ctx->raw_buffer + WKDM_RAW_PLANE_SIZE * 2;
     u8 *r3 = ctx->raw_buffer + WKDM_RAW_PLANE_SIZE * 3;
 
-    unsigned int index0_len = 0, index1_len = 0, miss_count = 0, word;
+    /* OPTIMASI: Pengecilan Tipe Data menjadi u16 untuk index iterasi loop */
+    u16 index0_len = 0, index1_len = 0, miss_count = 0, word;
     u8 tag_pack = 0;
 
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
+    PRAGMA_UNROLL_4
     for (word = 0; word < WKDM_WORDS; word++) {
         u32 bucket, value;
         u32 *entry;
         u8 tag;
-        
-        /* OPTIMASI 1: Prefetch L1 Cache untuk latensi memori yang lebih rendah */
+
+        /* OPTIMASI: Tarik data ke L1 Cache terlebih dahulu */
         prefetch(src + ((word + 4) << 2));
 
         value = get_unaligned_le32(src + (word << 2));
@@ -206,7 +216,7 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
     {
         unsigned int offset = 0;
 
-        wkdm_write_header(out, (u16)index0_len, (u16)index1_len, (u16)miss_count);
+        wkdm_write_header(out, index0_len, index1_len, miss_count);
         offset += WKDM_HEADER_SIZE;
 
         memcpy(out + offset, tags, WKDM_TAG_BYTES);
@@ -237,14 +247,14 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx)
     }
 }
 
-static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct hybrid_ctx *ctx)
+static int wkdm_unpack_linear(const u8 * __restrict src, unsigned int slen, u8 * __restrict dst, struct hybrid_ctx *ctx)
 {
     u32 *dict = ctx->wkdm_dict;
     const u8 *tags, *index0, *index1, *r3, *r2, *r1, *r0;
 
-    u16 index0_len, index1_len, miss_count;
-    unsigned int index0_used = 0, index1_used = 0, miss_used = 0;
-    unsigned int expected_size, word;
+    u16 index0_len, index1_len, miss_count, word;
+    u16 index0_used = 0, index1_used = 0, miss_used = 0;
+    unsigned int expected_size;
 
     u8 index0_prev = 0, index1_prev = 0;
     u8 prev0 = 0, prev1 = 0, prev2 = 0, prev3 = 0;
@@ -270,11 +280,12 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
 
     memset(dict, 0, WKDM_DICT_BUCKETS * WKDM_DICT_WAYS * sizeof(u32));
 
+    PRAGMA_UNROLL_4
     for (word = 0; word < WKDM_WORDS; word++) {
         u8 tag = (tags[word >> 2] >> ((word & 3) << 1)) & 0x03;
         u32 bucket, value, *entry;
 
-        /* OPTIMASI 2: Mengganti switch-case dengan Branch Hint untuk CPU Pipeline yang lebih mulus */
+        /* OPTIMASI: Hapus switch-case, ganti dengan percabangan yang dipandu likely/unlikely */
         if (unlikely(tag == TAG_ZERO)) {
             put_unaligned_le32(0, dst + (word << 2));
         } 
@@ -383,7 +394,6 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     struct hybrid_ctx *ctx = ctx_ptr;
     int wkdm_len, lz4_len;
     unsigned long now = jiffies;
-    bool use_hc;
 
     if (unlikely(!dlen || slen != WKDM_PAGE_SIZE || *dlen < WKDM_PAGE_SIZE))
         return -EINVAL;
@@ -395,19 +405,12 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     if (unlikely(wkdm_len <= 0))
         return -ENOSPC; 
 
-    /* HC-CENTRIC CPU POLICY (Tuned for HZ=1000) */
     if (ctx->burst_count >= WKDM_COMPRESS_RATE_CRITICAL) {
-        use_hc = false; 
-    } else {
-        use_hc = true; 
-    }
-
-    if (use_hc) {
-        lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
-                                  WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
-    } else {
         lz4_len = LZ4_compress_default(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
                                        ctx->lz4_workspace);
+    } else {
+        lz4_len = LZ4_compress_HC(ctx->wkdm_buffer, dst, wkdm_len, *dlen, 
+                                  WKDM_LZ4HC_LEVEL, ctx->lz4hc_workspace);
     }
 
     if (unlikely(lz4_len <= 0 || lz4_len >= WKDM_PAGE_SIZE))
@@ -461,5 +464,5 @@ module_init(wkdm_lz4hc_mod_init);
 module_exit(wkdm_lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("WKdm-LZ4/HC V30 HC-Centric Density Edition - Anti Lag");
+MODULE_DESCRIPTION("WKdm-LZ4/HC V30 HC-Centric Density Edition (Max Optimized)");
 MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
