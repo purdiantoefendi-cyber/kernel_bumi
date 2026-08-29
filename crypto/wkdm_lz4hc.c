@@ -65,7 +65,7 @@
  * Diturunkan ke 5. Artinya sistem diizinkan maksimal 5 kompresi HC-12 per milidetik.
  * Jika beban melebihi ini, fallback ke Fast diaktifkan sesaat untuk membebaskan CPU stall.
  */
-#define WKDM_COMPRESS_RATE_CRITICAL 8
+#define WKDM_COMPRESS_RATE_CRITICAL 25
 #define WKDM_DECAY_MAX_SHIFT        8
 
 #define TAG_ZERO                0x00
