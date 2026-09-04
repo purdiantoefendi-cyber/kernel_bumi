@@ -1,6 +1,6 @@
 /*
- * wkdm_arm64.S
- * PURE ARM64 ASSEMBLY CORE for WKdm-LZ4/HC V45
+ * wkdm_lz4hc_arm64.S
+ * PURE ARM64 ASSEMBLY CORE for WKdm-LZ4/HC V46 ETERNITY
  * Target: Cortex-A75/A55 (Helio G85) - AArch64
  */
 
@@ -101,3 +101,39 @@ fast_arm64_memcpy_nt:
     subs w2, w2, #1
     cbnz w2, 5b
 6:  ret
+
+/* 
+ * EXTR Fusion Delta Encode + Copy 
+ * Memanfaatkan instruksi 'extr' (Extract) AArch64 untuk operasi 1-Cycle
+ * C Prototype: void fast_arm64_fusion_delta_nt(u8 *dst, const u8 *src, unsigned int len);
+ */
+.global fast_arm64_fusion_delta_nt
+.type fast_arm64_fusion_delta_nt, %function
+fast_arm64_fusion_delta_nt:
+    cbz w2, 4f                  
+    cmp w2, #1
+    b.eq 5f                     
+    
+    ldrb w3, [x1], #1           
+    strb w3, [x0], #1           
+    sub w2, w2, #1              
+1:  cmp w2, #8
+    b.lt 3f                     
+    ldr x4, [x1], #8            
+    extr x5, x4, x3, #56        // SAKTI: 1 Cycle Bit-Shift & ORR lewat Hardware
+    eor x6, x4, x5              
+    str x6, [x0], #8            // Tulis aman 8-byte
+    lsr x3, x4, #56             
+    sub w2, w2, #8
+    b 1b
+3:  cbz w2, 4f                  
+2:  ldrb w4, [x1], #1           
+    eor w5, w4, w3              
+    strb w5, [x0], #1           
+    mov w3, w4                  
+    subs w2, w2, #1
+    b.gt 2b
+4:  ret
+5:  ldrb w3, [x1]
+    strb w3, [x0]
+    ret
