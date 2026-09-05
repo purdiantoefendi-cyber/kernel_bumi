@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * WKdm-LZ4/HC V57 APEX FINAL
- * Explicit 1-Byte Framing + Adaptive Selector + DC ZVA + STNP
+ * WKdm-LZ4/HC V58 SILICON INCARNATE
+ * Pure LDP Inline ASM + Explicit CRC32W + V57 Explicit Framing
  */
 
 #include <linux/init.h>
@@ -33,7 +33,7 @@
 #define WKDM_HEADER_SIZE 6
 #define WKDM_MAX_CAPACITY (WKDM_HEADER_SIZE + WKDM_TAG_BYTES + WKDM_TOTAL_INDEX_BYTES + WKDM_TOTAL_RAW_BYTES)
 
-/* V57: 1-Byte Explicit Framing Protocol */
+/* 1-Byte Explicit Framing Protocol */
 #define TYPE_ZERO 0x00
 #define TYPE_WKDM 0x01
 #define TYPE_RAW  0x02
@@ -50,10 +50,17 @@
 #define WKDM_PREFETCH_READ(a) asm volatile("prfm pldl1strm, [%0]" :: "r"(a) : "memory")
 #define WKDM_PREFETCH_WRITE(a) asm volatile("prfm pstl1strm, [%0]" :: "r"(a) : "memory")
 
+/* V58: Pure Inline ASM Hardware Hash */
 #if defined(__ARM_FEATURE_CRC32)
-#define HW_HASH_32(v) (__builtin_aarch64_crc32w(0,(v)) & (WKDM_DICT_BUCKETS-1))
+static __always_inline u32 hw_hash_32_asm(u32 val) {
+    u32 res;
+    asm volatile("crc32w %w0, wzr, %w1" : "=r"(res) : "r"(val));
+    return res & (WKDM_DICT_BUCKETS - 1);
+}
 #else
-#define HW_HASH_32(v) (((v)*2654435761U) >> (32-WKDM_DICT_BITS))
+static __always_inline u32 hw_hash_32_asm(u32 val) {
+    return (val * 2654435761U) >> (32 - WKDM_DICT_BITS);
+}
 #endif
 
 extern void fast_arm64_zero_4k_dczva(u8 *dst);
@@ -64,22 +71,14 @@ extern void fast_arm64_copy_256_stnp(u8 *dst, const u8 *src);
 
 __asm__(
 ".text\n.align 4\n"
-
-/* DC ZVA Hardware Zeroing */
 ".global fast_arm64_zero_4k_dczva\n.type fast_arm64_zero_4k_dczva, %function\n"
 "fast_arm64_zero_4k_dczva:\n mov w1, #64\n1: dc zva, x0\n add x0, x0, #64\n subs w1, w1, #1\n b.gt 1b\n ret\n"
-
 ".global fast_arm64_zero_dict_dczva\n.type fast_arm64_zero_dict_dczva, %function\n"
 "fast_arm64_zero_dict_dczva:\n mov w1, #32\n1: dc zva, x0\n add x0, x0, #64\n subs w1, w1, #1\n b.gt 1b\n ret\n"
-
 ".global fast_arm64_zero_valid_dczva\n.type fast_arm64_zero_valid_dczva, %function\n"
 "fast_arm64_zero_valid_dczva:\n mov w1, #4\n1: dc zva, x0\n add x0, x0, #64\n subs w1, w1, #1\n b.gt 1b\n ret\n"
-
-/* 256-Byte Copy STNP */
 ".global fast_arm64_copy_256_stnp\n.type fast_arm64_copy_256_stnp, %function\n"
 "fast_arm64_copy_256_stnp:\n mov w2, #256\n1: ldp x3, x4, [x1], #16\n stnp x3, x4, [x0]\n add x0, x0, #16\n ldp x5, x6, [x1], #16\n stnp x5, x6, [x0]\n add x0, x0, #16\n subs w2, w2, #32\n b.gt 1b\n ret\n"
-
-/* EXTR Delta Copy */
 ".global fast_arm64_delta_copy\n.type fast_arm64_delta_copy, %function\n"
 "fast_arm64_delta_copy:\n cbz w2,9f\n cmp w2,#1\n b.eq 8f\n ldrb w3,[x1],#1\n strb w3,[x0],#1\n subs w2,w2,#1\n lsl x3,x3,#56\n1: cmp w2,#8\n b.lt 6f\n ldr x4,[x1],#8\n extr x5,x4,x3,#56\n eor x6,x4,x5\n str x6,[x0],#8\n mov x3,x4\n subs w2,w2,#8\n b.ne 1b\n6: cbz w2,9f\n lsr x3,x3,#56\n7: ldrb w4,[x1],#1\n eor w5,w4,w3\n strb w5,[x0],#1\n mov w3,w4\n subs w2,w2,#1\n b.gt 7b\n9: ret\n8: ldrb w3,[x1]\n strb w3,[x0]\n ret\n"
 );
@@ -102,10 +101,7 @@ struct hybrid_ctx {
 } ____cacheline_aligned;
 
 struct wkdm_metrics {
-    u16 miss;
-    u16 wkdm_len;
-    u16 burst;
-    u8  score;
+    u16 miss; u16 wkdm_len; u16 burst; u8 score;
 };
 
 static __always_inline u8 wkdm_select_mode(struct wkdm_metrics *m){
@@ -132,6 +128,31 @@ static __always_inline unsigned int wkdm_sample_score(const u8 *src){
     return s;
 }
 
+/* V58: Inline ASM Unrolled Packing Logic */
+#define PROCESS_WORD(v_idx, shift_val) do { \
+    u32 val = v##v_idx; \
+    if (unlikely(val == 0)) { tp |= TAG_ZERO << shift_val; } \
+    else { \
+        u32 b = hw_hash_32_asm(val); \
+        u32 *e = &dict[b << 1]; \
+        WKDM_PREFETCH_READ(e); \
+        if (wkdm_way_valid(valid, b, 0) && e[0] == val) { \
+            if (unlikely(l0 >= WKDM_MAX_INDEX_BYTES)) return -ENOSPC; \
+            tp |= TAG_DICT_0 << shift_val; i0[l0++] = (u8)b; \
+        } else if (!is_gaming && wkdm_way_valid(valid, b, 1) && e[1] == val) { \
+            if (unlikely(l1 >= WKDM_MAX_INDEX_BYTES)) return -ENOSPC; \
+            tp |= TAG_DICT_1 << shift_val; i1[l1++] = (u8)b; \
+            e[1] = e[0]; e[0] = val; \
+        } else { \
+            if (unlikely(miss >= WKDM_MAX_MISS)) return -ENOSPC; \
+            tp |= TAG_MISS << shift_val; \
+            r0[miss] = (u8)val; r1[miss] = (u8)(val >> 8); \
+            r2[miss] = (u8)(val >> 16); r3[miss] = (u8)(val >> 24); \
+            miss++; e[1] = e[0]; e[0] = val; valid[b] = (valid[b] << 1) | 1; \
+        } \
+    } \
+} while(0)
+
 static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx, struct wkdm_memory_pool *pool, struct wkdm_metrics *met){
     u32 *dict=pool->dict; u8 *valid=pool->valid; u8 *tags=pool->tags_buffer;
     u8 *i0=pool->index_buffer, *i1=i0+WKDM_MAX_INDEX_BYTES;
@@ -141,30 +162,28 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx, struc
     bool is_gaming = ctx->burst_count >= WKDM_BURST_FAST_THRESHOLD;
     fast_arm64_zero_dict_dczva(dict); fast_arm64_zero_valid_dczva(valid);
     
+    const u8 *src_ptr = src;
+    
     for(u16 w=0; w<WKDM_WORDS; w+=4){
-        WKDM_PREFETCH_READ(src+((w+32)<<2));
-        u32 v[4]={get_unaligned_le32(src+((w+0)<<2)), get_unaligned_le32(src+((w+1)<<2)), get_unaligned_le32(src+((w+2)<<2)), get_unaligned_le32(src+((w+3)<<2))};
-        page_or|=v[0]|v[1]|v[2]|v[3]; u8 tp=0;
+        WKDM_PREFETCH_READ(src_ptr + 128);
         
-        for(int k=0;k<4;k++){ 
-            u32 val=v[k]; unsigned int sh=k*2; 
-            if(unlikely(val==0)){ tp|=TAG_ZERO<<sh; continue; }
-            u32 b=HW_HASH_32(val); u32 *e=&dict[b<<1]; 
-            WKDM_PREFETCH_READ(e);
-            
-            if(wkdm_way_valid(valid,b,0) && e[0]==val){ 
-                tp|=TAG_DICT_0<<sh; i0[l0++]=(u8)b; 
-            }
-            else if(!is_gaming && wkdm_way_valid(valid,b,1) && e[1]==val){ 
-                tp|=TAG_DICT_1<<sh; i1[l1++]=(u8)b; e[1]=e[0]; e[0]=val; 
-            }
-            else{ 
-                tp|=TAG_MISS<<sh; 
-                r0[miss]=(u8)val; r1[miss]=(u8)(val>>8); r2[miss]=(u8)(val>>16); r3[miss]=(u8)(val>>24); 
-                miss++; e[1]=e[0]; e[0]=val; valid[b]=(valid[b]<<1)|1; 
-            }
-        } 
-        tags[w>>2]=tp;
+        /* V58: Hardware LDP Load (16 bytes in 1 cycle, auto-increments ptr) */
+        register u64 d0_1, d2_3;
+        asm volatile("ldp %0, %1, [%2], #16" : "=r"(d0_1), "=r"(d2_3), "+r"(src_ptr));
+        
+        u32 v0 = (u32)d0_1; u32 v1 = (u32)(d0_1 >> 32);
+        u32 v2 = (u32)d2_3; u32 v3 = (u32)(d2_3 >> 32);
+        
+        page_or |= v0 | v1 | v2 | v3;
+        u8 tp = 0;
+        
+        /* V58: Manual Loop Unrolling */
+        PROCESS_WORD(0, 0);
+        PROCESS_WORD(1, 2);
+        PROCESS_WORD(2, 4);
+        PROCESS_WORD(3, 6);
+        
+        tags[w>>2] = tp;
     }
     
     if(unlikely(page_or==0)) return 0;
@@ -179,11 +198,7 @@ static int wkdm_pack_split(const u8 *src, u8 *out, struct hybrid_ctx *ctx, struc
     fast_arm64_delta_copy(out+off,r1,miss); off+=miss; 
     fast_arm64_delta_copy(out+off,r0,miss); off+=miss;
     
-    met->miss = miss;
-    met->wkdm_len = off;
-    met->burst = ctx->burst_count;
-    met->score = 0;
-    
+    met->miss = miss; met->wkdm_len = off; met->burst = ctx->burst_count; met->score = 0;
     if (unlikely(off >= 4096)) return -ENOSPC; 
     return off;
 }
@@ -204,7 +219,7 @@ static int wkdm_unpack_linear(const u8 *src, unsigned int slen, u8 *dst, struct 
             else if(tag==3){ 
                 if(unlikely(cm>=miss)) return -EINVAL; 
                 p3^=r3[cm]; p2^=r2[cm]; p1^=r1[cm]; p0^=r0[cm]; cm++; 
-                u32 v=p0|p1<<8|p2<<16|p3<<24; u32 b=HW_HASH_32(v); u32 *e=&dict[b<<1]; 
+                u32 v=p0|p1<<8|p2<<16|p3<<24; u32 b=hw_hash_32_asm(v); u32 *e=&dict[b<<1]; 
                 e[1]=e[0]; e[0]=v; valid[b]=(valid[b]<<1)|1; put_unaligned_le32(v,o); 
             }
             else if(tag==1){ 
@@ -249,12 +264,7 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     int wl = wkdm_pack_split(src, c->wkdm_buffer, c, pool, &met);
     put_cpu_ptr(&wkdm_percpu_pool);
 
-    /* V57: TYPE_ZERO Protocol */
-    if (wl == 0) { 
-        dst[0] = TYPE_ZERO; 
-        *dlen = 1; 
-        return 0; 
-    }
+    if (wl == 0) { dst[0] = TYPE_ZERO; *dlen = 1; return 0; }
     
     met.score = wkdm_sample_score(src);
     u8 mode = wkdm_select_mode(&met);
@@ -262,35 +272,20 @@ static int hybrid_scompress(struct crypto_scomp *tfm, const u8 *src, unsigned in
     int ll;
     WKDM_PREFETCH_WRITE(dst);
 
-    /* V57: Frame offset = dst + 1. Memastikan marker aman */
     if (wl < 0) { 
         mode = (met.burst >= WKDM_BURST_FAST_THRESHOLD) ? WKDM_MODE_FAST : WKDM_MODE_BALANCED;
-        if (mode == WKDM_MODE_FAST) {
-            ll = LZ4_compress_default(src, dst + 1, 4096, *dlen - 1, c->lz4_workspace);
-        } else {
-            ll = LZ4_compress_HC(src, dst + 1, 4096, *dlen - 1, 9, c->lz4hc_workspace);
-        }
+        if (mode == WKDM_MODE_FAST) ll = LZ4_compress_default(src, dst + 1, 4096, *dlen - 1, c->lz4_workspace);
+        else ll = LZ4_compress_HC(src, dst + 1, 4096, *dlen - 1, 9, c->lz4hc_workspace);
         
-        /* Tolak page jika LZ4 RAW Fallback masih memakan >= 4095 bytes (Biar ZRAM tangani) */
         if (ll <= 0 || ll >= 4095) return -ENOSPC;
-        
-        dst[0] = TYPE_RAW;
-        *dlen = ll + 1;
-        return 0;
+        dst[0] = TYPE_RAW; *dlen = ll + 1; return 0;
     } else {
-        if (mode == WKDM_MODE_FAST) { 
-            ll = LZ4_compress_default(c->wkdm_buffer, dst + 1, wl, *dlen - 1, c->lz4_workspace); 
-        } else if (mode == WKDM_MODE_BALANCED) { 
-            ll = LZ4_compress_HC(c->wkdm_buffer, dst + 1, wl, *dlen - 1, 9, c->lz4hc_workspace); 
-        } else {
-            ll = LZ4_compress_HC(c->wkdm_buffer, dst + 1, wl, *dlen - 1, 12, c->lz4hc_workspace); 
-        }
+        if (mode == WKDM_MODE_FAST) ll = LZ4_compress_default(c->wkdm_buffer, dst + 1, wl, *dlen - 1, c->lz4_workspace); 
+        else if (mode == WKDM_MODE_BALANCED) ll = LZ4_compress_HC(c->wkdm_buffer, dst + 1, wl, *dlen - 1, 9, c->lz4hc_workspace); 
+        else ll = LZ4_compress_HC(c->wkdm_buffer, dst + 1, wl, *dlen - 1, 12, c->lz4hc_workspace); 
         
         if (ll <= 0 || ll >= 4095) return -ENOSPC;
-        
-        dst[0] = TYPE_WKDM;
-        *dlen = ll + 1;
-        return 0;
+        dst[0] = TYPE_WKDM; *dlen = ll + 1; return 0;
     }
 }
 
@@ -298,21 +293,12 @@ static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned 
     struct hybrid_ctx *c=ctx_ptr; if(!dlen || slen < 1) return -EINVAL; 
     
     u8 type = src[0];
-    
-    if (type == TYPE_ZERO) { 
-        fast_arm64_zero_4k_dczva(dst); 
-        *dlen = 4096; 
-        return 0; 
-    }
-    
+    if (type == TYPE_ZERO) { fast_arm64_zero_4k_dczva(dst); *dlen = 4096; return 0; }
     if (type == TYPE_RAW) {
-        /* V57: Decode langsung ke `dst`. Bebas biaya copy 4K! */
         int ret = LZ4_decompress_safe(src + 1, dst, slen - 1, 4096);
         if (ret != 4096) return -EINVAL;
-        *dlen = 4096;
-        return 0;
+        *dlen = 4096; return 0;
     }
-
     if (type == TYPE_WKDM) {
         int ret = LZ4_decompress_safe(src + 1, c->wkdm_buffer, slen - 1, WKDM_MAX_CAPACITY); 
         if (ret < 6) return -EINVAL;
@@ -322,20 +308,16 @@ static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned 
         put_cpu_ptr(&wkdm_percpu_pool);
         
         if (ret < 0) return ret; 
-        *dlen = 4096; 
-        return 0;
+        *dlen = 4096; return 0;
     }
-
-    /* Payload korup atau tidak dikenali */
     return -EINVAL;
 }
 
 static struct scomp_alg scomp={
     .alloc_ctx=hybrid_alloc_ctx, .free_ctx=hybrid_free_ctx, .compress=hybrid_scompress, .decompress=hybrid_sdecompress,
-    .base={.cra_name="wkdm_lz4hc",.cra_driver_name="wkdm_lz4hc-v57",.cra_module=THIS_MODULE,},
+    .base={.cra_name="wkdm_lz4hc",.cra_driver_name="wkdm_lz4hc-v58",.cra_module=THIS_MODULE,},
 };
-
 static int __init mod_init(void){ return crypto_register_scomp(&scomp); }
 static void __exit mod_fini(void){ crypto_unregister_scomp(&scomp); }
 module_init(mod_init); module_exit(mod_fini);
-MODULE_LICENSE("GPL"); MODULE_AUTHOR("Purdianto Efendi"); MODULE_DESCRIPTION("WKdm-LZ4/HC V57 APEX FINAL (Explicit Framing & Fast RAW Routing)"); MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
+MODULE_LICENSE("GPL"); MODULE_AUTHOR("Purdianto Efendi"); MODULE_DESCRIPTION("WKdm-LZ4/HC V58 SILICON INCARNATE (Pure ASM Core)"); MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
