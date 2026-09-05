@@ -164,6 +164,3 @@ crypto_simd-y := simd.o
 obj-$(CONFIG_CRYPTO_SIMD) += crypto_simd.o
 
 obj-$(CONFIG_CRYPTO_WKDM_LZ4HC) += wkdm_lz4hc.o
-
-# Kbuild akan menggabungkan kedua file ini menjadi wkdm_lz4hc.o
-wkdm_lz4hc-y := wkdm_lz4hc_main.o wkdm_lz4hc_arm64.o
