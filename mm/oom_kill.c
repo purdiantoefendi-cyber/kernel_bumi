@@ -241,8 +241,18 @@ unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,
 	 * The baseline for the badness score is the proportion of RAM that each
 	 * task's rss, pagetable and swap space use.
 	 */
-	points = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS) +
-		mm_pgtables_bytes(p->mm) / PAGE_SIZE;
+	/*
+	 * HACK EXTREME MULTITasking:
+	 * Hapus kalkulasi get_mm_counter(p->mm, MM_SWAPENTS) dari skor.
+	 * Biarkan aplikasi yang berhasil dikompresi ke zRAM (swap) 
+	 * memiliki skor yang sangat kecil agar tidak dibunuh!
+	 *
+	 * KODE ASLI:
+	 * points = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS) +
+	 *	mm_pgtables_bytes(p->mm) / PAGE_SIZE;[span_3](start_span)[span_3](end_span)
+	 */
+	points = get_mm_rss(p->mm) + (mm_pgtables_bytes(p->mm) / PAGE_SIZE);
+
 	task_unlock(p);
 
 	/* Normalize to oom_score_adj units */
