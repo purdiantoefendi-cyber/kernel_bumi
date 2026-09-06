@@ -1104,6 +1104,11 @@ bool out_of_memory(struct oom_control *oc)
 
 	if (oom_killer_disabled)
 		return false;
+	
+	if (is_memcg_oom(oc)) {
+		pr_warn("Extreme Multitasking: Mengabaikan limitasi Memcg OOM!\n");
+		return true; /* Berbohong kepada kernel bahwa OOM sudah ditangani */
+	}
 
 	if (!is_memcg_oom(oc)) {
 		blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
