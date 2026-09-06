@@ -4152,7 +4152,12 @@ should_reclaim_retry(gfp_t gfp_mask, unsigned order,
 	 * Make sure we converge to OOM if we cannot make any progress
 	 * several times in the row.
 	 */
-	if (*no_progress_loops > MAX_RECLAIM_RETRIES) {
+	/*
+	 * HACK EXTREME MULTITASKING:
+	 * Lipat gandakan toleransi perulangan (loops) sebelum menyerah pada OOM.
+	 * KODE ASLI: if (*no_progress_loops > MAX_RECLAIM_RETRIES)[span_12](start_span)[span_12](end_span)
+	 */
+	if (*no_progress_loops > (MAX_RECLAIM_RETRIES * 4)) {
 		/* Before OOM, exhaust highatomic_reserve */
 		return unreserve_highatomic_pageblock(ac, true);
 	}
@@ -7639,8 +7644,8 @@ int __meminit init_per_zone_wmark_min(void)
 
 	if (new_min_free_kbytes > user_min_free_kbytes) {
 		min_free_kbytes = new_min_free_kbytes;
-		if (min_free_kbytes < 128)
-			min_free_kbytes = 128;
+		if (min_free_kbytes < 32)
+			min_free_kbytes = 32;
 		if (min_free_kbytes > 65536)
 			min_free_kbytes = 65536;
 	} else {
