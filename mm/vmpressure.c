@@ -38,7 +38,7 @@
  * TODO: Make the window size depend on machine size, as we do for vmstat
  * thresholds. Currently we set it to 512 pages (2MB for 4KB pages).
  */
-static const unsigned long vmpressure_win = SWAP_CLUSTER_MAX * 8;[span_1](start_span)[span_1](end_span)
+static const unsigned long vmpressure_win = SWAP_CLUSTER_MAX * 8;
 
 /*
  * These thresholds are used when we account memory pressure through
@@ -46,8 +46,8 @@ static const unsigned long vmpressure_win = SWAP_CLUSTER_MAX * 8;[span_1](start_
  * essence, they are percents: the higher the value, the more number
  * unsuccessful reclaims there were.
  */
-static const unsigned int vmpressure_level_med = 45;[span_2](start_span)[span_2](end_span)
-static const unsigned int vmpressure_level_critical = 85;[span_3](start_span)[span_3](end_span)
+static const unsigned int vmpressure_level_med = 45;
+static const unsigned int vmpressure_level_critical = 85;
 
 /*
  * When there are too little pages left to scan, vmpressure() may miss the
