@@ -598,7 +598,8 @@ static int add_exception_handler(const struct bpf_insn *insn,
  * >0 - successfully JITed a 16-byte eBPF instruction.
  * <0 - failed to JIT.
  */
-static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
+static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx,
+		      bool extra_pass)
 {
 	const u8 code = insn->code;
 	const u8 dst = bpf2a64[insn->dst_reg];
@@ -933,12 +934,17 @@ emit_cond_jmp:
 		const u8 r0 = bpf2a64[BPF_REG_0];
 		bool func_addr_fixed;
 		u64 func_addr;
+		int ret;
 
 		ret = bpf_jit_get_func_addr(ctx->prog, insn, extra_pass,
 					    &func_addr, &func_addr_fixed);
 		if (ret < 0)
 			return ret;
-		emit_addr_mov_i64(tmp, func_addr, ctx);
+		if (func_addr_fixed)
+			/* We can use optimized emission here. */
+			emit_a64_mov_i64(tmp, func_addr, ctx);
+		else
+			emit_addr_mov_i64(tmp, func_addr, ctx);
 		emit(A64_BLR(tmp), ctx);
 		emit(A64_MOV(1, r0, A64_R(0)), ctx);
 		break;
@@ -1078,7 +1084,7 @@ emit_cond_jmp:
 	return 0;
 }
 
-static int build_body(struct jit_ctx *ctx)
+static int build_body(struct jit_ctx *ctx, bool extra_pass)
 {
 	const struct bpf_prog *prog = ctx->prog;
 	int i;
@@ -1096,8 +1102,6 @@ static int build_body(struct jit_ctx *ctx)
 		const struct bpf_insn *insn = &prog->insnsi[i];
 		int ret;
 
-		if (ctx->image == NULL)
-			ctx->offset[i] = ctx->idx;
 		ret = build_insn(insn, ctx, extra_pass);
 		if (ret > 0) {
 			i++;
@@ -1202,7 +1206,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *prog)
 	/* 1. Initial fake pass to compute ctx->idx. */
 
 	/* Fake pass to fill in ctx->offset. */
-	if (build_body(&ctx)) {
+	if (build_body(&ctx, extra_pass)) {
 		prog = orig_prog;
 		goto out_off;
 	}
@@ -1239,7 +1243,7 @@ skip_init_ctx:
 
 	build_prologue(&ctx, was_classic);
 
-	if (build_body(&ctx)) {
+	if (build_body(&ctx, extra_pass)) {
 		bpf_jit_binary_free(header);
 		prog = orig_prog;
 		goto out_off;
