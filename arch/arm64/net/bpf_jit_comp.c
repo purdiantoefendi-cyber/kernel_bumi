@@ -167,14 +167,17 @@ static inline void emit_addr_mov_i64(const int reg, const u64 val,
 	}
 }
 
-static inline int bpf2a64_offset(int bpf_to, int bpf_from,
+static inline int bpf2a64_offset(int bpf_insn, int off,
 				 const struct jit_ctx *ctx)
 {
-	int to = ctx->offset[bpf_to];
-	/* -1 to account for the Branch instruction */
-	int from = ctx->offset[bpf_from] - 1;
-
-	return to - from;
+	/* BPF JMP offset is relative to the next instruction */
+	bpf_insn++;
+	/*
+	 * Whereas arm64 branch instructions encode the offset
+	 * from the branch itself, so we must subtract 1 from the
+	 * instruction offset.
+	 */
+	return ctx->offset[bpf_insn + off] - (ctx->offset[bpf_insn] - 1);
 }
 
 static void jit_fill_hole(void *area, unsigned int size)
@@ -784,7 +787,7 @@ emit_bswap_uxt:
 
 	/* JUMP off */
 	case BPF_JMP | BPF_JA:
-		jmp_offset = bpf2a64_offset(i + off, i, ctx);
+		jmp_offset = bpf2a64_offset(i, off, ctx);
 		check_imm26(jmp_offset);
 		emit(A64_B(jmp_offset), ctx);
 		break;
@@ -801,7 +804,7 @@ emit_bswap_uxt:
 	case BPF_JMP | BPF_JSLE | BPF_X:
 		emit(A64_CMP(1, dst, src), ctx);
 emit_cond_jmp:
-		jmp_offset = bpf2a64_offset(i + off, i, ctx);
+		jmp_offset = bpf2a64_offset(i, off, ctx);
 		check_imm19(jmp_offset);
 		switch (BPF_OP(code)) {
 		case BPF_JEQ:
@@ -1016,22 +1019,38 @@ static int build_body(struct jit_ctx *ctx)
 	const struct bpf_prog *prog = ctx->prog;
 	int i;
 
+	/*
+	 * - offset[0] offset of the end of prologue,
+	 *   start of the 1st instruction.
+	 * - offset[1] - offset of the end of 1st instruction,
+	 *   start of the 2nd instruction
+	 * [....]
+	 * - offset[3] - offset of the end of 3rd instruction,
+	 *   start of 4th instruction
+	 */
 	for (i = 0; i < prog->len; i++) {
 		const struct bpf_insn *insn = &prog->insnsi[i];
 		int ret;
 
-		ret = build_insn(insn, ctx);
+		if (ctx->image == NULL)
+			ctx->offset[i] = ctx->idx;
+		ret = build_insn(insn, ctx, extra_pass);
 		if (ret > 0) {
 			i++;
 			if (ctx->image == NULL)
 				ctx->offset[i] = ctx->idx;
 			continue;
 		}
-		if (ctx->image == NULL)
-			ctx->offset[i] = ctx->idx;
 		if (ret)
 			return ret;
 	}
+	/*
+	 * offset is allocated with prog->len + 1 so fill in
+	 * the last element with the offset after the last
+	 * instruction (end of program)
+	 */
+	if (ctx->image == NULL)
+		ctx->offset[i] = ctx->idx;
 
 	return 0;
 }
@@ -1110,7 +1129,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *prog)
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.prog = prog;
 
-	ctx.offset = kcalloc(prog->len, sizeof(int), GFP_KERNEL);
+	ctx.offset = kcalloc(prog->len + 1, sizeof(int), GFP_KERNEL);
 	if (ctx.offset == NULL) {
 		prog = orig_prog;
 		goto out_off;
@@ -1200,6 +1219,7 @@ skip_init_ctx:
 	prog->jited_len = prog_size;
 
 	if (!prog->is_func || extra_pass) {
+		bpf_prog_fill_jited_linfo(prog, ctx.offset + 1);
 out_off:
 		kfree(ctx.offset);
 		kfree(jit_data);
