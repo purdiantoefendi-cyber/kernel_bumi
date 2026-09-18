@@ -22,10 +22,7 @@
 #include <linux/compat.h>
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #include <linux/susfs_def.h>
-#endif
-
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-#include <linux/susfs_def.h>
+extern int susfs_get_data_path(struct path *path);
 extern bool susfs_is_inode_sus_path(struct inode *inode);
 #endif
 
@@ -196,18 +193,36 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		.ctx.actor = fillonedir,
 		.dirent = dirent
 	};
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int path_err = -EINVAL;
+	struct path path;
+#endif
 
 	if (!f.file)
 		return -EBADF;
 
+
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
+		path_err = susfs_get_data_path(&path);
+		if (!path_err) {
+			buf.sb = path.dentry->d_inode->i_sb;
+			goto orig_flow;
+		}
+	}
 	buf.sb = f.file->f_inode->i_sb;
+
+orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (buf.result)
 		error = buf.result;
 
 	fdput_pos(f);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!path_err)
+		path_put(&path);
+#endif
 	return error;
 }
 
@@ -283,6 +298,18 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	inode = ilookup(buf->sb, ino);
+	if (!inode) {
+		goto orig_flow;
+	}
+	if (susfs_is_inode_sus_path(inode)) {
+		iput(inode);
+		return 0;
+	}
+	iput(inode);
+orig_flow:
+#endif
 	dirent = buf->current_dir;
 	if (__put_user(d_ino, &dirent->d_ino))
 		goto efault;
@@ -315,6 +342,10 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 		.current_dir = dirent
 	};
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int path_err = -EINVAL;
+	struct path path;
+#endif
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
@@ -324,7 +355,16 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 		return -EBADF;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
+		path_err = susfs_get_data_path(&path);
+		if (!path_err) {
+			buf.sb = path.dentry->d_inode->i_sb;
+			goto orig_flow;
+		}
+	}
 	buf.sb = f.file->f_inode->i_sb;
+
+orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
@@ -337,6 +377,10 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 			error = count - buf.count;
 	}
 	fdput_pos(f);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!path_err)
+		path_put(&path);
+#endif
 	return error;
 }
 
@@ -393,6 +437,18 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	inode = ilookup(buf->sb, ino);
+	if (!inode) {
+		goto orig_flow;
+	}
+	if (susfs_is_inode_sus_path(inode)) {
+		iput(inode);
+		return 0;
+	}
+	iput(inode);
+orig_flow:
+#endif
 	dirent = buf->current_dir;
 	if (__put_user(ino, &dirent->d_ino))
 		goto efault;
@@ -427,6 +483,10 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 		.current_dir = dirent
 	};
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int path_err = -EINVAL;
+	struct path path;
+#endif
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
@@ -436,7 +496,16 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 		return -EBADF;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
+		path_err = susfs_get_data_path(&path);
+		if (!path_err) {
+			buf.sb = path.dentry->d_inode->i_sb;
+			goto orig_flow;
+		}
+	}
 	buf.sb = f.file->f_inode->i_sb;
+
+orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
@@ -450,6 +519,10 @@ int ksys_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 			error = count - buf.count;
 	}
 	fdput_pos(f);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!path_err)
+		path_put(&path);
+#endif
 	return error;
 }
 
@@ -473,8 +546,6 @@ struct compat_readdir_callback {
 	struct compat_old_linux_dirent __user *dirent;
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct super_block *sb;
-	bool is_base_dentry_android_data_root_dir;
-	bool is_base_dentry_sdcard_root_dir;
 #endif
 	int result;
 };
@@ -545,17 +616,35 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		.ctx.actor = compat_fillonedir,
 		.dirent = dirent
 	};
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int path_err = -EINVAL;
+	struct path path;
+#endif
 
 	if (!f.file)
 		return -EBADF;
+
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
+		path_err = susfs_get_data_path(&path);
+		if (!path_err) {
+			buf.sb = path.dentry->d_inode->i_sb;
+			goto orig_flow;
+		}
+	}
 	buf.sb = f.file->f_inode->i_sb;
+
+orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (buf.result)
 		error = buf.result;
 
 	fdput_pos(f);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!path_err)
+		path_put(&path);
+#endif
 	return error;
 }
 
@@ -593,11 +682,7 @@ static int compat_filldir(struct dir_context *ctx, const char *name, int namlen,
 	buf->error = -EINVAL;	/* only used if we fail.. */
 	if (reclen > buf->count)
 		return -EINVAL;
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
-		return 0;
-	}
-#endif
+
 	d_ino = ino;
 	if (sizeof(d_ino) < sizeof(ino) && d_ino != ino) {
 		buf->error = -EOVERFLOW;
@@ -622,6 +707,18 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	inode = ilookup(buf->sb, ino);
+	if (!inode) {
+		goto orig_flow;
+	}
+	if (susfs_is_inode_sus_path(inode)) {
+		iput(inode);
+		return 0;
+	}
+	iput(inode);
+orig_flow:
+#endif
 	dirent = buf->current_dir;
 	if (__put_user(d_ino, &dirent->d_ino))
 		goto efault;
@@ -654,6 +751,10 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 		.count = count
 	};
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	int path_err = -EINVAL;
+	struct path path;
+#endif
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
@@ -661,8 +762,19 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	f = fdget_pos(fd);
 	if (!f.file)
 		return -EBADF;
+
+
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (f.file->f_inode->i_sb->s_magic == FUSE_SUPER_MAGIC) {
+		path_err = susfs_get_data_path(&path);
+		if (!path_err) {
+			buf.sb = path.dentry->d_inode->i_sb;
+			goto orig_flow;
+		}
+	}
 	buf.sb = f.file->f_inode->i_sb;
+
+orig_flow:
 #endif
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
@@ -675,6 +787,10 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 			error = count - buf.count;
 	}
 	fdput_pos(f);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	if (!path_err)
+		path_put(&path);
+#endif
 	return error;
 }
 #endif

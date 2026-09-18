@@ -62,7 +62,9 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 #include <linux/vmalloc.h>
-
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
@@ -1917,6 +1919,12 @@ int do_execve_file(struct file *file, void *__argv, void *__envp)
 __attribute__((hot))
 extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
 				void *argv, void *envp, int *flags);
+#endif
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+__attribute__((hot))
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			void *argv, void *envp, int *flags);
 #endif
 
 int do_execve(struct filename *filename,
