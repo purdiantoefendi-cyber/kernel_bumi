@@ -521,7 +521,7 @@ CONFIG_SCHED_BORE=y
 CONFIG_IOSCHED_ZEN=y
 CONFIG_IOSCHED_GAMER=y
 CONFIG_IOSCHED_PERFORMANCE=y
-CONFIG_CMDLINE="ramoops_memreserve=4M elevator=gamer"
+CONFIG_CMDLINE="ramoops_memreserve=4M elevator=performance mitigations=off audit=0 androidboot.selinux=permissive"
 #CONFIG_CMDLINE="ramoops_memreserve=4M elevator=performance"
 #CONFIG_CMDLINE="ramoops_memreserve=4M"
 CONFIG_DEFAULT_IOSCHED="gamer"
