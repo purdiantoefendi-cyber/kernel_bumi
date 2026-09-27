@@ -532,6 +532,7 @@ CONFIG_IOSCHED_PERFORMANCE=y
 CONFIG_CMDLINE="ramoops_memreserve=4M elevator=gamer mitigations=off audit=0 androidboot.selinux=permissive"
 #CONFIG_CMDLINE="ramoops_memreserve=4M elevator=performance"
 #CONFIG_CMDLINE="ramoops_memreserve=4M"
+CONFIG_DEFAULT_GAMER=y
 CONFIG_DEFAULT_IOSCHED="gamer"
 CONFIG_CLEANCACHE=y
 CONFIG_EXTREME_LOW_RAM=y
