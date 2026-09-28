@@ -61,7 +61,7 @@ config IOSCHED_PERFORMANCE
 
 choice
         prompt "Default I/O scheduler"
-        default DEFAULT_GAMER
+        default DEFAULT_PERFORMANCE
         help
           Select the I/O scheduler which will be used by default for all
           block devices.
