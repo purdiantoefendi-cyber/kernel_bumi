@@ -49,40 +49,40 @@ config IOSCHED_ZEN
         Synchronous requests have priority over asynchronous.
 
 config IOSCHED_GAMER
-    bool "Gamer I/O scheduler (Kyber Mod) - DianTk Modz V7"
-    default y
-    ---help---
-          Gamer I/O scheduler - modifikasi dari Kyber untuk low-latency gaming.
-          Target read 0.5ms, write 2ms, aggressive batching untuk MT6768.
+	bool "Gamer I/O scheduler"
+	default y
+	---help---
+	  Gamer IO scheduler optimized for low-latency gaming workloads
+	  and high-throughput performance.
 
 config IOSCHED_PERFORMANCE
-    bool "Performance I/O scheduler"
-    default y
+	bool "Performance I/O scheduler"
+	default y
 
 choice
-        prompt "Default I/O scheduler"
-        default DEFAULT_GAMER
-        help
-          Select the I/O scheduler which will be used by default for all
-          block devices.
+	prompt "Default I/O scheduler"
+	default DEFAULT_GAMER
+	help
+	  Select the IO scheduler which will be used by default for all
+	  block devices.
 
-        config DEFAULT_GAMER
-                bool "gamer" if IOSCHED_GAMER=y
+	config DEFAULT_GAMER
+		bool "Gamer" if IOSCHED_GAMER
 
-        config DEFAULT_PERFORMANCE
-                bool "performance" if IOSCHED_PERFORMANCE=y
+	config DEFAULT_PERFORMANCE
+		bool "Performance" if IOSCHED_PERFORMANCE
 
-        config DEFAULT_ZEN
-                bool "zen" if IOSCHED_ZEN=y
+	config DEFAULT_ZEN
+		bool "Zen" if IOSCHED_ZEN
 
-        config DEFAULT_DEADLINE
-                bool "Deadline" if IOSCHED_DEADLINE=y
+	config DEFAULT_DEADLINE
+		bool "Deadline" if IOSCHED_DEADLINE
 
-        config DEFAULT_CFQ
-                bool "CFQ" if IOSCHED_CFQ=y
+	config DEFAULT_CFQ
+		bool "CFQ" if IOSCHED_CFQ
 
-        config DEFAULT_NOOP
-                bool "No-op"
+	config DEFAULT_NOOP
+		bool "No-op"
 
 endchoice
 
