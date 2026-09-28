@@ -85,7 +85,6 @@ endchoice
 
 config DEFAULT_IOSCHED
         string
-        default "gamer" if DEFAULT_GAMER
         default "performance" if DEFAULT_PERFORMANCE
         default "zen" if DEFAULT_ZEN
         default "deadline" if DEFAULT_DEADLINE
