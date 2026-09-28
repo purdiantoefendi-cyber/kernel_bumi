@@ -4,122 +4,121 @@ if BLOCK
 menu "IO Schedulers"
 
 config IOSCHED_NOOP
-        bool
-        default y
-        ---help---
-          The no-op I/O scheduler is a minimal scheduler that does basic merging
-          and sorting. Its main uses include non-disk based block devices like
-          memory devices, and specialised software or hardware environments
-          that do their own scheduling and require only minimal assistance from
-          the kernel.
-
-config IOSCHED_DEADLINE
-        bool "Deadline I/O scheduler"
-        default y
-        ---help---
-          The deadline I/O scheduler is simple and compact. It will provide
-          CSCAN service with FIFO expiration of requests, switching to
-          a new point in the service tree and doing a batch of IO from there
-          in case of expiry.
-
-config IOSCHED_CFQ
-        tristate "CFQ I/O scheduler"
-        default y
-        ---help---
-          The CFQ I/O scheduler tries to distribute bandwidth equally
-          among all processes in the system. It should provide a fair
-          and low latency working environment, suitable for both desktop
-          and server systems.
-
-          This is the default I/O scheduler.
-
-config CFQ_GROUP_IOSCHED
-        bool "CFQ Group Scheduling support"
-        depends on IOSCHED_CFQ && BLK_CGROUP
-        default n
-        ---help---
-          Enable group IO scheduling in CFQ.
-
-config IOSCHED_ZEN
-    bool "Zen I/O scheduler (MQ Edition)"
-    default y
-    ---help---
-            Zen IO scheduler ported to Multi-Queue (blk-mq) architecture.
-        FCFS, dispatches are back-inserted, deadlines ensure fairness.
-        Synchronous requests have priority over asynchronous.
-
-config IOSCHED_GAMER
-	bool "Gamer I/O scheduler"
+	bool
 	default y
 	---help---
-	  Gamer IO scheduler optimized for low-latency gaming workloads
-	  and high-throughput performance.
+	  The no-op I/O scheduler is a minimal scheduler that does basic merging
+	  and sorting. Its main uses include non-disk based block devices like
+	  memory devices, and specialised software or hardware environments
+	  that do their own scheduling and require only minimal assistance from
+	  the kernel.
+
+config IOSCHED_DEADLINE
+	bool "Deadline I/O scheduler"
+	default y
+	---help---
+	  The deadline I/O scheduler is simple and compact. It will provide
+	  CSCAN service with FIFO expiration of requests, switching to
+	  a new point in the service tree and doing a batch of IO from there
+	  in case of expiry.
+
+config IOSCHED_CFQ
+	tristate "CFQ I/O scheduler"
+	default y
+	---help---
+	  The CFQ I/O scheduler tries to distribute bandwidth equally
+	  among all processes in the system. It should provide a fair
+	  and low latency working environment, suitable for both desktop
+	  and server systems.
+
+	  This is the default I/O scheduler.
+
+config CFQ_GROUP_IOSCHED
+	bool "CFQ Group Scheduling support"
+	depends on IOSCHED_CFQ && BLK_CGROUP
+	default n
+	---help---
+	  Enable group IO scheduling in CFQ.
+
+config IOSCHED_ZEN
+        bool "Zen I/O scheduler (MQ Edition)"
+        default y
+        ---help---
+          Zen IO scheduler ported to Multi-Queue (blk-mq) architecture.
+          FCFS, dispatches are back-inserted, deadlines ensure fairness.
+          Synchronous requests have priority over asynchronous.
+
+config IOSCHED_GAMER
+    bool "Gamer I/O scheduler"
+    default y
 
 config IOSCHED_PERFORMANCE
-	bool "Performance I/O scheduler"
-	default y
+    bool "Performance I/O scheduler"
+    default y
+
 
 choice
-	prompt "Default I/O scheduler"
-	default DEFAULT_GAMER
-	help
-	  Select the IO scheduler which will be used by default for all
-	  block devices.
+        prompt "Default I/O scheduler"
+        default DEFAULT_GAMER
+        help
+          Select the I/O scheduler which will be used by default for all
+          block devices.
+		  
+		  config DEFAULT_GAMER
+                bool "gamer" if IOSCHED_GAMER=y
 
-	config DEFAULT_GAMER
-		bool "Gamer" if IOSCHED_GAMER
+        config DEFAULT_PERFORMANCE
+                bool "performance" if IOSCHED_PERFORMANCE=y
 
-	config DEFAULT_PERFORMANCE
-		bool "Performance" if IOSCHED_PERFORMANCE
+        config DEFAULT_ZEN
+                bool "zen" if IOSCHED_ZEN=y
 
-	config DEFAULT_ZEN
-		bool "Zen" if IOSCHED_ZEN
+        config DEFAULT_DEADLINE
+                bool "Deadline" if IOSCHED_DEADLINE=y
 
-	config DEFAULT_DEADLINE
-		bool "Deadline" if IOSCHED_DEADLINE
+        config DEFAULT_CFQ
+                bool "CFQ" if IOSCHED_CFQ=y
 
-	config DEFAULT_CFQ
-		bool "CFQ" if IOSCHED_CFQ
-
-	config DEFAULT_NOOP
-		bool "No-op"
+        config DEFAULT_NOOP
+                bool "No-op"
 
 endchoice
 
 config DEFAULT_IOSCHED
         string
-        default "gamer" if DEFAULT_GAMER
+		default "gamer" if DEFAULT_GAMER
         default "performance" if DEFAULT_PERFORMANCE
         default "zen" if DEFAULT_ZEN
         default "deadline" if DEFAULT_DEADLINE
         default "cfq" if DEFAULT_CFQ
         default "noop" if DEFAULT_NOOP
 
+
 config MQ_IOSCHED_DEADLINE
-        bool "MQ deadline I/O scheduler"
-        default n
-        ---help---
-          MQ version of the deadline IO scheduler.
+	bool "MQ deadline I/O scheduler"
+	default y
+	---help---
+	  MQ version of the deadline IO scheduler.
 
 config MQ_IOSCHED_KYBER
-        bool "Kyber I/O scheduler"
-        default n
-        ---help---
-          The Kyber I/O scheduler is a low-overhead scheduler suitable for
-          multiqueue and other fast devices. Given target latencies for reads and
-          synchronous writes, it will self-tune queue depths to achieve that
-          goal.
+	bool "Kyber I/O scheduler"
+	default y
+	---help---
+	  The Kyber I/O scheduler is a low-overhead scheduler suitable for
+	  multiqueue and other fast devices. Given target latencies for reads and
+	  synchronous writes, it will self-tune queue depths to achieve that
+	  goal.
 
 config IOSCHED_BFQ
-        bool "BFQ I/O scheduler"
-        default n
-        ---help---
-        BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
-        of the device among all processes according to their weights,
-        regardless of the device parameters and with any workload. It
-        also guarantees a low latency to interactive and soft
-        real-time applications.  Details in
-        Documentation/block/bfq-iosched.txt
+	bool "BFQ I/O scheduler"
+	default n
+	---help---
+	BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
+	of the device among all processes according to their weights,
+	regardless of the device parameters and with any workload. It
+	also guarantees a low latency to interactive and soft
+	real-time applications.  Details in
+	Documentation/block/bfq-iosched.txt
 
 config BFQ_GROUP_IOSCHED
        bool "BFQ hierarchical scheduling support"
