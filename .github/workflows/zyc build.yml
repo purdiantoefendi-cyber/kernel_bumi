@@ -42,7 +42,7 @@ jobs:
       run: |
         echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
         # Menambahkan LLVM=1 dan LLVM_IAS=1 secara default ke ARGS
-        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz_sukiSU KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
+        echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
 
     - name: Install Dependencies
       run: |
