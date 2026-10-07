@@ -373,6 +373,8 @@ static inline void smp_prepare_cpus(unsigned int maxcpus) { }
  */
 static void __init setup_command_line(char *command_line)
 {
+	char *p;
+
 	saved_command_line =
 		memblock_virt_alloc(strlen(boot_command_line) + 1, 0);
 	initcall_command_line =
@@ -380,7 +382,33 @@ static void __init setup_command_line(char *command_line)
 	static_command_line = memblock_virt_alloc(strlen(command_line) + 1, 0);
 	strcpy(saved_command_line, boot_command_line);
 	strcpy(static_command_line, command_line);
+
+	/* --- KODE SPOOFING DIMULAI DI SINI --- */
+	// Memanipulasi saved_command_line yang dibaca oleh /proc/cmdline
+	p = strstr(saved_command_line, "androidboot.verifiedbootstate=orange");
+	if (p) {
+		strncpy(p, "androidboot.verifiedbootstate=green ", 36);
+	}
+	
+	p = strstr(saved_command_line, "androidboot.flash.locked=0");
+	if (p) {
+		strncpy(p, "androidboot.flash.locked=1", 26);
+	}
+
+	p = strstr(saved_command_line, "androidboot.vbmeta.device_state=unlocked");
+	if (p) {
+		strncpy(p, "androidboot.vbmeta.device_state=locked  ", 40);
+	}
+
+	// Lakukan hal yang sama pada static_command_line dan boot_command_line
+	// agar konsisten di seluruh log kernel.
+	p = strstr(boot_command_line, "androidboot.verifiedbootstate=orange");
+	if (p) strncpy(p, "androidboot.verifiedbootstate=green ", 36);
+	p = strstr(static_command_line, "androidboot.verifiedbootstate=orange");
+	if (p) strncpy(p, "androidboot.verifiedbootstate=green ", 36);
+	/* --- KODE SPOOFING SELESAI --- */
 }
+
 
 /*
  * We need to finalize in a non-__init function or else race conditions
