@@ -153,7 +153,12 @@ build_kernel() {
 
   log "Compiling kernel (${JOBS} threads)..."
   local start_time=$SECONDS
-  make "${MAKE_FLAGS[@]}" Image.gz-dtb
+  
+  if ! make "${MAKE_FLAGS[@]}" Image.gz-dtb; then
+    warn "Build paralel gagal! Mengulang dengan -j1 untuk menampilkan detail error..."
+    make "${MAKE_FLAGS[@]}" -j1 Image.gz-dtb
+  fi
+  
   local elapsed=$(( SECONDS - start_time ))
   ok "Kernel compiled in ${elapsed}s"
 }
@@ -208,7 +213,7 @@ setup_variant() {
       local src="${VARIANT_DIRS[$variant]}"
       [[ -d "${KERNEL_DIR}/${src}/kernel" ]] || \
         err "'${src}/kernel' subdir missing — did submodules initialise?"
-      
+
       # Determine branch/tag to check out
       local target_ref=""
       case "$variant" in
@@ -217,7 +222,7 @@ setup_variant() {
         ksu-next+susfs) target_ref="v3.2.0-legacy" ;;
         sukisu-ultra+susfs) target_ref="builtin" ;;
       esac
-      
+
       log "Checking out ${target_ref} in ${src}..."
       # Make sure we have the reference (fetch if needed)
       git -C "${KERNEL_DIR}/${src}" fetch origin "${target_ref}:${target_ref}" --tags 2>/dev/null || \
@@ -225,10 +230,10 @@ setup_variant() {
       git -C "${KERNEL_DIR}/${src}" reset --hard HEAD 2>/dev/null || true
       git -C "${KERNEL_DIR}/${src}" clean -fd 2>/dev/null || true
       git -C "${KERNEL_DIR}/${src}" checkout -q "${target_ref}"
-      
+
       if [[ "$variant" == "ksu-next+susfs" || "$variant" == "sukisu-ultra+susfs" ]]; then
         log "Injecting SUSFS v1.5.5 support into ${src} ${target_ref} branch..."
-        
+
         # 1. Add #include <linux/susfs.h> and call susfs_try_umount(new_uid) in setuid_hook.c
         local setuid_hook="${KERNEL_DIR}/${src}/kernel/setuid_hook.c"
         if [[ ! -f "$setuid_hook" ]]; then
@@ -237,7 +242,7 @@ setup_variant() {
                 setuid_hook="${KERNEL_DIR}/${src}/kernel/hook/setuid_hook.c"
             fi
         fi
-        
+
         python3 -c '
 import sys
 filepath = sys.argv[1]
@@ -425,7 +430,7 @@ if "ksu_try_umount" not in content:
         f.write(content)
 ' "$umount_c"
       fi
-      
+
       swap_ksu "$src"
       ksu_enable
       ;;
@@ -435,7 +440,7 @@ if "ksu_try_umount" not in content:
 teardown_variant() {
   local variant="$1"
   [[ "$variant" == "vanilla" ]] && ksu_enable || true
-  
+
   # Restore submodules to default branches
   if [[ "$variant" == "ksu-next" || "$variant" == "ksu-next+susfs" ]]; then
     log "Restoring KernelSU-Next to dev branch..."
