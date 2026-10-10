@@ -1,4 +1,4 @@
-name: Build Kernel Custom (Extreme Gaming)
+name: Build Kernel Custom KSU (Extreme Gaming)
 
 on:
   workflow_dispatch:
