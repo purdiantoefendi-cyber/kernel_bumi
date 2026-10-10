@@ -17,9 +17,9 @@ on:
         required: true
         default: 'lineage-23.2'
       variants:
-        description: 'Varian Build (pisahkan dengan spasi, misal: vanilla ksu-next sukisu)'
+        description: 'Varian Build (pisahkan dengan spasi)'
         required: true
-        default: 'vanilla ksu-next sukisu'
+        default: 'vanilla ksu-next sukisu ksu-next+susfs sukisu-ultra+susfs'
       defconfig:
         description: 'Defconfig Kernel'
         required: true
@@ -27,7 +27,8 @@ on:
       extreme_kcflags:
         description: 'Flag Optimasi Ekstrem (KCFLAGS)'
         required: true
-        default: '-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55'
+        # Flag Clang LLVM Ekstrem yang lebih lengkap dan agresif
+        default: '-O3 -Wno-error -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55 -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-run-inliner -mllvm -polly-vectorizer=stripmine -fomit-frame-pointer -falign-functions=32 -falign-loops=32 -fno-semantic-interposition'
       kernelsu_url:
         description: 'Custom KSU URL (Opsional: Kosongkan untuk pakai bawaan submodule)'
         required: false
@@ -55,7 +56,7 @@ jobs:
       - name: Generate JSON Array
         id: set-matrix
         run: |
-          # Mengubah string "vanilla ksu-next" menjadi format array JSON ["vanilla", "ksu-next"]
+          # Mengubah string input varian menjadi format array JSON
           VARIANTS="${{ github.event.inputs.variants }}"
           JSON_ARRAY=$(echo "$VARIANTS" | awk 'BEGIN{printf "["} {for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i==NF?"":",")} END{print "]"}')
           echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
