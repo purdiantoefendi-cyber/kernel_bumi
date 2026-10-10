@@ -1,61 +1,172 @@
-name: Build Kernel by purdiantoefendi-cyber (Smart Build)
+name: Build Kernel Custom (Extreme Gaming)
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Pilih Runner Environment'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-20.04
+          - self-hosted
+      branch:
+        description: 'Branch repositori yang akan di-build'
+        required: true
+        default: 'lineage-23.2'
+      variants:
+        description: 'Varian Build (pisahkan dengan spasi, misal: vanilla ksu-next sukisu)'
+        required: true
+        default: 'vanilla ksu-next sukisu'
+      defconfig:
+        description: 'Defconfig Kernel'
+        required: true
+        default: 'earth_defconfig'
+      extreme_kcflags:
+        description: 'Flag Optimasi Ekstrem (KCFLAGS)'
+        required: true
+        default: '-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55'
+      kernelsu_url:
+        description: 'Custom KSU URL (Opsional: Kosongkan untuk pakai bawaan submodule)'
+        required: false
+        default: ''
+      kernelsu_branch:
+        description: 'KSU Branch / Version (Opsional)'
+        required: false
+        default: ''
+
+# Membatalkan build lama jika ada eksekusi baru di branch yang sama
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1: Menyiapkan matrix varian secara dinamis dari input teks
+  # ──────────────────────────────────────────────────────────────────────────
+  prepare_matrix:
+    name: Prepare Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Generate JSON Array
+        id: set-matrix
+        run: |
+          # Mengubah string "vanilla ksu-next" menjadi format array JSON ["vanilla", "ksu-next"]
+          VARIANTS="${{ github.event.inputs.variants }}"
+          JSON_ARRAY=$(echo "$VARIANTS" | awk 'BEGIN{printf "["} {for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i==NF?"":",")} END{print "]"}')
+          echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
+          echo "Varian yang akan diproses: $JSON_ARRAY"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2: Build Kernel Paralel (Berdasarkan matrix varian)
+  # ──────────────────────────────────────────────────────────────────────────
   build:
-    name: Build Kernel by ${{ github.actor }}
-    runs-on: self-hosted
-    permissions:
-      contents: write
+    needs: prepare_matrix
+    name: Build (${{ matrix.variant }})
+    runs-on: ${{ github.event.inputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.prepare_matrix.outputs.matrix) }}
 
     steps:
-      # Langkah 1: Checkout Kode Sumber
-      - name: Checkout Kernel Source
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          ref: Aberuzz   # branch kamu
-          fetch-depth: 0   # penting agar bisa ambil history penuh
-          submodules: recursive  # ini supaya subproject commit (KernelSU-Next) ikut diambil
+          ref: ${{ github.event.inputs.branch }}
+          submodules: recursive
+          fetch-depth: 0
 
-      # Langkah 2: Install Dependensi
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc libssl-dev zip curl libstdc++6 git libncurses5-dev bison flex gcc-aarch64-linux-gnu
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip unzip \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
 
-      # Langkah 5: Unduh Toolchain Clang
-      - name: Download Clang Toolchain
-        run: git clone https://gitlab.com/PixelOS-Devices/playgroundtc.git --depth=1 clang-toolchain
-
-      # Langkah 6: Atur Environment Build
-      - name: Set Up Build Environment
+      - name: Setup ZyC-Clang (Extreme Toolchain)
         run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=DianTk_Modz_sukiSU" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=GitHub-Actions" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "${{ github.workspace }}/clang-toolchain/bin" >> $GITHUB_PATH
+          git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
+          echo "$PWD/clang/bin" >> $GITHUB_PATH
 
-      # Langkah 7: Buat .config
-      - name: Generate .config
-        run: make O=out earth_defconfig
-
-      # Langkah 8: Kompilasi Kernel
-      - name: Compile Kernel
+      - name: Set Variables & Versioning
         run: |
-          make O=out -j$(nproc) KCFLAGS="-Wno-error" LLVM=1 || make O=out -j1 KCFLAGS="-Wno-error" LLVM=1
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          DATE="$(date +%Y%m%d)"
+          TIME="$(date +'%H%M')"
+          VERSION="v${DATE}-${SHORT_SHA}"
 
-      # Langkah 9: Upload
-      - name: Upload Kernel Artifact
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "BUILD_TIME=${TIME}-${DATE}" >> $GITHUB_ENV
+          
+          # Parameter wajib untuk kompilasi kernel modern
+          echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
+
+      - name: Inject Custom KernelSU
+        # Script KSU kustom hanya berjalan jika URL diisi & varian bukan vanilla
+        if: github.event.inputs.kernelsu_url != '' && matrix.variant != 'vanilla'
+        run: |
+          echo "Menginjeksi Custom KSU dari: ${{ github.event.inputs.kernelsu_url }}"
+          curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
+
+      - name: Generate Defconfig
+        run: |
+          make O=out $ARGS ${{ github.event.inputs.defconfig }}
+
+      - name: Compile Kernel (Extreme Optimizations)
+        run: |
+          # Deteksi apakah repositori menggunakan script build.sh (untuk packing flashable zip)
+          if [ -f "./build.sh" ]; then
+            echo "Ditemukan build.sh! Melakukan build & zip packing..."
+            export KERNEL_VERSION="${{ env.VERSION }}"
+            export KCFLAGS="${{ github.event.inputs.extreme_kcflags }}"
+            ./build.sh ${{ matrix.variant }}
+          else
+            # Fallback kompilasi manual jika tidak ada build.sh
+            echo "build.sh tidak ditemukan. Melakukan kompilasi manual..."
+            make O=out -j$(nproc) $ARGS \
+              KCFLAGS="${{ github.event.inputs.extreme_kcflags }}" || \
+            make O=out -j1 $ARGS KCFLAGS="-O3 -Wno-error"
+          fi
+
+      - name: Check Output & Rename ZIP (Jika Ada)
+        run: |
+          if ls releases/kernel-earth-${{ matrix.variant }}-*.zip 1> /dev/null 2>&1; then
+            OLD_ZIP=$(ls releases/kernel-earth-${{ matrix.variant }}-*.zip | head -n 1)
+            NEW_ZIP="releases/kernel-earth-${{ matrix.variant }}-${{ env.VERSION }}-EXTREME.zip"
+            mv "$OLD_ZIP" "$NEW_ZIP"
+            echo "ZIP Berhasil di-rename menjadi: $NEW_ZIP"
+          elif [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "::error::Output build (ZIP / Image.gz-dtb) tidak ditemukan. Build gagal."
+            exit 1
+          fi
+
+      # ──────────────────────────────────────────────────────────────────────
+      # Upload Artifacts (Tanpa Publish GitHub Release)
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Upload Artifacts (ZIP Flashable)
+        if: hashFiles('releases/*.zip') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-build
+          name: kernel-${{ matrix.variant }}-${{ env.BUILD_TIME }}-EXTREME
+          path: releases/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Artifacts (Raw Image - Fallback)
+        if: hashFiles('releases/*.zip') == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.variant }}-${{ env.BUILD_TIME }}-EXTREME
           path: |
             out/arch/arm64/boot/Image.gz*
             out/arch/arm64/boot/dts/**/*.dtb
+            out/arch/arm64/boot/dts/**/*.gz
+            out/arch/arm64/boot/dts/**/*.gz-dtb
+          retention-days: 7
+          if-no-files-found: error
