@@ -1,0 +1,52 @@
+name: Auto Fix Submodules
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch yang akan diperbaiki'
+        required: true
+        default: 'lineage-23.2'
+
+jobs:
+  fix-submodules:
+    runs-on: ubuntu-latest
+    # Memberikan izin agar GitHub Actions bot bisa melakukan push commit
+    permissions:
+      contents: write 
+    steps:
+      - name: Checkout Repository (Tanpa Submodule)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          # PENTING: Matikan clone submodule di sini agar tidak terjadi error "not our ref"
+          submodules: false 
+          fetch-depth: 0
+
+      - name: Fix & Update AnyKernel3
+        run: |
+          # 1. Setup identitas bot Git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 2. Hapus referensi AnyKernel3 yang rusak
+          echo "Menghapus referensi AnyKernel3 lama..."
+          git rm --cached AnyKernel3 || true
+          rm -rf AnyKernel3
+
+          # 3. Tambahkan ulang AnyKernel3 dari sumber resminya (otomatis mengambil commit terbaru)
+          echo "Menambahkan ulang AnyKernel3 versi terbaru..."
+          git submodule add -f --name AnyKernel3 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          
+          # 4. Sinkronisasi submodule lainnya (opsional, agar sekalian up-to-date)
+          git submodule update --init --remote KernelSU-Next || true
+          git submodule update --init --remote SukiSU || true
+
+          # 5. Buat commit perbaikan
+          echo "Menyimpan perubahan..."
+          git commit -am "Fix & Update: Sinkronisasi ulang submodule AnyKernel3 ke versi terbaru" || echo "Submodule sudah up-to-date, tidak ada yang perlu di-commit."
+          
+          # 6. Push kembali ke repositori kamu
+          echo "Mendorong (Push) ke repositori..."
+          git push origin ${{ github.event.inputs.branch }}
+          
