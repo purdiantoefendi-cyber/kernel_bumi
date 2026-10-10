@@ -26,7 +26,7 @@ on:
       extreme_kcflags:
         description: 'Flag Optimasi Ekstrem (KCFLAGS)'
         required: true
-        default: '-O3 -Wno-error -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55 -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-run-inliner -mllvm -polly-vectorizer=stripmine -fomit-frame-pointer -falign-functions=32 -falign-loops=32 -fno-semantic-interposition'
+        default: '-O3 -Wno-error -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75 -mllvm -polly -mllvm -polly-ast-use-context -mllvm -polly-run-inliner -mllvm -polly-vectorizer=stripmine -fomit-frame-pointer -falign-functions=32 -falign-loops=32 -fno-semantic-interposition'
       kernelsu_url:
         description: 'Custom KSU URL (Opsional: Kosongkan untuk pakai bawaan submodule)'
         required: false
