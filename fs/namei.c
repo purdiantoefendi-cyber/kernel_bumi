@@ -40,6 +40,7 @@
 #include <linux/init_task.h>
 #include <linux/uaccess.h>
 #include <linux/build_bug.h>
+#include <linux/susfs.h>
 #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
 #endif
@@ -1678,35 +1679,32 @@ static struct dentry *__lookup_hash(const struct qstr *name,
                 struct dentry *base, unsigned int flags)
 {
         struct dentry *dentry = lookup_dcache(name, base, flags);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-        bool found_sus_path = false;
-#endif
+        struct dentry *old;
+        struct inode *dir = base->d_inode;
+
         if (dentry)
                 return dentry;
 
-	if (dentry)
-		return dentry;
+        /* Don't create child dentry for a dead directory. */
+        if (unlikely(IS_DEADDIR(dir)))
+                return ERR_PTR(-ENOENT);
 
-	/* Don't create child dentry for a dead directory. */
-	if (unlikely(IS_DEADDIR(dir)))
-		return ERR_PTR(-ENOENT);
+        dentry = d_alloc(base, name);
+        if (unlikely(!dentry))
+                return ERR_PTR(-ENOMEM);
 
-	dentry = d_alloc(base, name);
-	if (unlikely(!dentry))
-		return ERR_PTR(-ENOMEM);
-
-	old = dir->i_op->lookup(dir, dentry, flags);
-	if (unlikely(old)) {
-		dput(dentry);
-		dentry = old;
-	}
+        old = dir->i_op->lookup(dir, dentry, flags);
+        if (unlikely(old)) {
+                dput(dentry);
+                dentry = old;
+        }
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
-		dput(dentry);
-		return ERR_PTR(-ENOENT);
-	}
+        if (!IS_ERR(dentry) && dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
+                dput(dentry);
+                return ERR_PTR(-ENOENT);
+        }
 #endif
-	return dentry;
+        return dentry;
 }
 
 static int lookup_fast(struct nameidata *nd,
@@ -3303,35 +3301,20 @@ static inline int open_to_namei_flags(int flag)
 
 static int may_o_create(const struct path *dir, struct dentry *dentry, umode_t mode)
 {
-	struct user_namespace *s_user_ns;
+        struct user_namespace *s_user_ns;
+        int error;
+
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	int error;
-
-	if (dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
-		error = inode_permission(dir->dentry->d_inode, MAY_WRITE | MAY_EXEC);
-		if (error) {
-			return error;
-		}
-		return -ENOENT;
-	}
-	error = security_path_mknod(dir, dentry, mode, 0);
-#else
-	int error = security_path_mknod(dir, dentry, mode, 0);
-#endif
-	if (error)
-		return error;
-
-        if (dentry->d_inode && unlikely(dentry->d_inode->i_mapping->flags & BIT_SUS_PATH) && likely(susfs_is_current_proc_umounted())) {
+        if (dentry->d_inode && unlikely(dentry->d_inode->i_state & INODE_STATE_SUS_PATH) && likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {
                 error = inode_permission(dir->dentry->d_inode, MAY_WRITE | MAY_EXEC);
                 if (error) {
                         return error;
                 }
                 return -ENOENT;
         }
-        error = security_path_mknod(dir, dentry, mode, 0);
-#else
-        int error = security_path_mknod(dir, dentry, mode, 0);
 #endif
+
+        error = security_path_mknod(dir, dentry, mode, 0);
         if (error)
                 return error;
 
