@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/uidgid.h> // Ditambahkan untuk membaca UID current_uid()
 
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 extern int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
@@ -16,6 +17,16 @@ static int cmdline_proc_show(struct seq_file *m, void *v)
 		return 0;
 	}
 #endif
+
+	/* Mulai: Hardcoded UBL / Bootloader State Spoofing */
+	if (current_uid().val >= 10000) {
+		/* Mengirimkan parameter CMDLINE palsu yang menyatakan perangkat terkunci (Locked/Green) */
+		seq_puts(m, "androidboot.verifiedbootstate=green androidboot.vbmeta.device_state=locked androidboot.flash.locked=1");
+		seq_putc(m, '\n');
+		return 0;
+	}
+	/* Selesai: Hardcoded UBL / Bootloader State Spoofing */
+
 	seq_puts(m, saved_command_line);
 	seq_putc(m, '\n');
 	return 0;
