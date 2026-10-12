@@ -2,6 +2,7 @@
 /*
  * WKdm-LZ4/HC V58 SILICON INCARNATE (C89 Strict Fix & Stable)
  * Pure LDP Inline ASM + Explicit CRC32W + V57 Explicit Framing
+ * Optimized: Removed redundant PRFM, Kept Original LZ4HC Levels
  */
 
 #include <linux/init.h>
@@ -163,7 +164,6 @@ static __always_inline unsigned int wkdm_sample_score(const u8 *src){
     else { \
         u32 b = hw_hash_32_asm(val); \
         u32 *e = &dict[b << 1]; \
-        WKDM_PREFETCH_READ(e); \
         if (wkdm_way_valid(valid, b, 0) && e[0] == val) { \
             if (unlikely(l0 >= WKDM_MAX_INDEX_BYTES)) return -ENOSPC; \
             tp |= TAG_DICT_0 << shift_val; i0[l0++] = (u8)b; \
