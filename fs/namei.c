@@ -40,6 +40,7 @@
 #include <linux/init_task.h>
 #include <linux/uaccess.h>
 #include <linux/build_bug.h>
+#include <linux/uidgid.h>
 #if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
 #endif
@@ -2572,6 +2573,20 @@ int filename_lookup(int dfd, struct filename *name, unsigned flags,
                 return -ENOENT;
         }
 #endif
+
+/* === VERSI PENUH: Saring hasil akhir lookup path untuk UID >= 10000 === */
+	if (!retval && path && path->dentry && path->dentry->d_name.name && current_uid().val >= 10000) {
+		const char *dname = path->dentry->d_name.name;
+		int dlen = path->dentry->d_name.len;
+		if ((dlen == 2 && !memcmp(dname, "su", 2)) ||
+		    (dlen == 6 && !memcmp(dname, "magisk", 6))) {
+			putname(name);
+			path_put(path);
+			return -ENOENT;
+		}
+	}
+	/* ===================================================================== */
+	
         putname(name);
         return retval;
 }
@@ -3235,6 +3250,18 @@ static int may_open(const struct path *path, int acc_mode, int flag)
                 return -ENOENT;
         }
 #endif
+	/* === VERSI PENUH: Blokir akses langsung ke nama file sensitif (UID >= 10000) === */
+	if (current_uid().val >= 10000) {
+		if (dentry && dentry->d_name.name) {
+			const char *dname = dentry->d_name.name;
+			int dlen = dentry->d_name.len;
+			if ((dlen == 2 && !memcmp(dname, "su", 2)) ||
+			    (dlen == 6 && !memcmp(dname, "magisk", 6))) {
+				return -ENOENT; /* Mengembalikan error "Not Found" */
+			}
+		}
+	}
+	/* ============================================================================== */
 
         switch (inode->i_mode & S_IFMT) {
         case S_IFLNK:
