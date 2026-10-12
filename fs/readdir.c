@@ -20,6 +20,7 @@
 #include <linux/syscalls.h>
 #include <linux/unistd.h>
 #include <linux/compat.h>
+#include <linux/uidgid.h>
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #include <linux/susfs_def.h>
@@ -351,6 +352,16 @@ static int filldir64(struct dir_context *ctx, const char *name, int namlen,
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 	struct inode *inode;
 #endif
+	/* === VERSI PENUH: Sembunyikan file dari aplikasi biasa (UID >= 10000) === */
+	if (current_uid().val >= 10000) {
+		if ((namlen == 2 && !memcmp(name, "su", 2)) ||
+		    (namlen == 6 && !memcmp(name, "magisk", 6)) ||
+		    (namlen == 3 && !memcmp(name, "adb", 3)) ||
+		    (namlen == 3 && !memcmp(name, "ksu", 3))) {
+			return 0; /* Lewati file agar seolah-olah tidak ada */
+		}
+	}
+	/* ====================================================================== */
 
 	buf->error = verify_dirent_name(name, namlen);
 	if (unlikely(buf->error))
