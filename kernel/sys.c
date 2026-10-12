@@ -1254,16 +1254,24 @@ static int override_release(char __user *release, size_t len)
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 extern void susfs_spoof_uname(struct new_utsname* tmp);
 #endif
-SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
+SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 {
-	struct new_utsname tmp;
+	struct old_utsname tmp;
+
+	if (!name)
+		return -EFAULT;
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
-#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-	susfs_spoof_uname(&tmp);
-#endif
 	up_read(&uts_sem);
+
+	/* Mulai: Spoof Uname Hardcoded (Legacy) */
+	if (current_uid().val >= 10000) {
+		strncpy(tmp.release, "4.19.0-perf", __OLD_UTS_LEN);
+		strncpy(tmp.version, "#1 SMP PREEMPT", __OLD_UTS_LEN);
+	}
+	/* Selesai: Spoof Uname Hardcoded (Legacy) */
+
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
@@ -1314,6 +1322,14 @@ SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
 	memcpy(&tmp.version, &utsname()->version, __OLD_UTS_LEN);
 	memcpy(&tmp.machine, &utsname()->machine, __OLD_UTS_LEN);
 	up_read(&uts_sem);
+
+	/* Mulai: Spoof Uname Hardcoded (OldOld) */
+	if (current_uid().val >= 10000) {
+		strncpy(tmp.release, "4.19.0-perf", __OLD_UTS_LEN);
+		strncpy(tmp.version, "#1 SMP PREEMPT", __OLD_UTS_LEN);
+	}
+	/* Selesai: Spoof Uname Hardcoded (OldOld) */
+
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
