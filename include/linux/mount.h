@@ -24,19 +24,19 @@ struct dentry;
 struct mnt_namespace;
 struct fs_context;
 
-#define MNT_NOSUID	0x01
-#define MNT_NODEV	0x02
-#define MNT_NOEXEC	0x04
-#define MNT_NOATIME	0x08
-#define MNT_NODIRATIME	0x10
-#define MNT_RELATIME	0x20
-#define MNT_READONLY	0x40	/* does the user want this to be r/o? */
+#define MNT_NOSUID        0x01
+#define MNT_NODEV        0x02
+#define MNT_NOEXEC        0x04
+#define MNT_NOATIME        0x08
+#define MNT_NODIRATIME        0x10
+#define MNT_RELATIME        0x20
+#define MNT_READONLY        0x40        /* does the user want this to be r/o? */
 
-#define MNT_SHRINKABLE	0x100
-#define MNT_WRITE_HOLD	0x200
+#define MNT_SHRINKABLE        0x100
+#define MNT_WRITE_HOLD        0x200
 
-#define MNT_SHARED	0x1000	/* if the vfsmount is a shared mount */
-#define MNT_UNBINDABLE	0x2000	/* if the vfsmount is a unbindable mount */
+#define MNT_SHARED        0x1000        /* if the vfsmount is a shared mount */
+#define MNT_UNBINDABLE        0x2000        /* if the vfsmount is a unbindable mount */
 /*
  * MNT_SHARED_MASK is the set of flags that should be cleared when a
  * mount becomes shared.  Currently, this is only the flag that says a
@@ -44,41 +44,40 @@ struct fs_context;
  * that shares events with another mount.  If you add a new MNT_*
  * flag, consider how it interacts with shared mounts.
  */
-#define MNT_SHARED_MASK	(MNT_UNBINDABLE)
+#define MNT_SHARED_MASK        (MNT_UNBINDABLE)
 #define MNT_USER_SETTABLE_MASK  (MNT_NOSUID | MNT_NODEV | MNT_NOEXEC \
-				 | MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME \
-				 | MNT_READONLY)
+                                 | MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME \
+                                 | MNT_READONLY)
 #define MNT_ATIME_MASK (MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME )
 
 #define MNT_INTERNAL_FLAGS (MNT_SHARED | MNT_WRITE_HOLD | MNT_INTERNAL | \
-			    MNT_DOOMED | MNT_SYNC_UMOUNT | MNT_MARKED)
+                            MNT_DOOMED | MNT_SYNC_UMOUNT | MNT_MARKED)
 
-#define MNT_INTERNAL	0x4000
+#define MNT_INTERNAL        0x4000
 
-#define MNT_LOCK_ATIME		0x040000
-#define MNT_LOCK_NOEXEC		0x080000
-#define MNT_LOCK_NOSUID		0x100000
-#define MNT_LOCK_NODEV		0x200000
-#define MNT_LOCK_READONLY	0x400000
-#define MNT_LOCKED		0x800000
-#define MNT_DOOMED		0x1000000
-#define MNT_SYNC_UMOUNT		0x2000000
-#define MNT_MARKED		0x4000000
-#define MNT_UMOUNT		0x8000000
+#define MNT_LOCK_ATIME                0x040000
+#define MNT_LOCK_NOEXEC                0x080000
+#define MNT_LOCK_NOSUID                0x100000
+#define MNT_LOCK_NODEV                0x200000
+#define MNT_LOCK_READONLY        0x400000
+#define MNT_LOCKED                0x800000
+#define MNT_DOOMED                0x1000000
+#define MNT_SYNC_UMOUNT                0x2000000
+#define MNT_MARKED                0x4000000
+#define MNT_UMOUNT                0x8000000
 
 struct vfsmount {
-	struct dentry *mnt_root;	/* root of the mounted tree */
-	struct super_block *mnt_sb;	/* pointer to superblock */
-	int mnt_flags;
-	void *data;
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
+        struct dentry *mnt_root;        /* root of the mounted tree */
+        struct super_block *mnt_sb;        /* pointer to superblock */
+        int mnt_flags;
+        void *data;
+        ANDROID_KABI_RESERVE(1);
+        ANDROID_KABI_RESERVE(2);
+        ANDROID_KABI_RESERVE(3);
 #ifdef CONFIG_KSU_SUSFS
-	u64 susfs_mnt_id_backup;
+        u64 susfs_mnt_id_backup;
 #endif
-	ANDROID_KABI_RESERVE(4);
-#endif
+        ANDROID_KABI_RESERVE(4);
 } __randomize_layout;
 
 struct file; /* forward dec */
@@ -104,11 +103,11 @@ struct file_system_type;
 extern struct vfsmount *fc_mount(struct fs_context *fc);
 extern struct vfsmount *vfs_create_mount(struct fs_context *fc);
 extern struct vfsmount *vfs_kern_mount(struct file_system_type *type,
-				      int flags, const char *name,
-				      void *data);
+                                      int flags, const char *name,
+                                      void *data);
 extern struct vfsmount *vfs_submount(const struct dentry *mountpoint,
-				     struct file_system_type *type,
-				     const char *name, void *data);
+                                     struct file_system_type *type,
+                                     const char *name, void *data);
 
 extern void mnt_set_expiry(struct vfsmount *mnt, struct list_head *expiry_list);
 extern void mark_mounts_for_expiry(struct list_head *mounts);
