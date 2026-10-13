@@ -1260,12 +1260,12 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
 
-	/* Mulai: Spoof Uname Hardcoded */
-	if (current_uid().val >= 10000) {
-		strncpy(tmp.release, "4.19.0-perf", __NEW_UTS_LEN);
-		strncpy(tmp.version, "#1 SMP PREEMPT", __NEW_UTS_LEN);
+	/* Mulai: Spoof Uname Lebih Aman */
+	if (from_kuid_munged(current_user_ns(), current_uid()) >= 10000) {
+		strlcpy(tmp.release, "4.19.0-perf", sizeof(tmp.release));
+		strlcpy(tmp.version, "#1 SMP PREEMPT", sizeof(tmp.version));
 	}
-	/* Selesai: Spoof Uname Hardcoded */
+	/* Selesai: Spoof Uname Lebih Aman */
 
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
@@ -1292,12 +1292,12 @@ SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
 
-	/* Mulai: Spoof Uname Hardcoded (Legacy) */
-	if (current_uid().val >= 10000) {
-		strncpy(tmp.release, "4.19.0-perf", __OLD_UTS_LEN);
-		strncpy(tmp.version, "#1 SMP PREEMPT", __OLD_UTS_LEN);
+/* Mulai: Spoof Uname Lebih Aman */
+	if (from_kuid_munged(current_user_ns(), current_uid()) >= 10000) {
+		strlcpy(tmp.release, "4.19.0-perf", sizeof(tmp.release));
+		strlcpy(tmp.version, "#1 SMP PREEMPT", sizeof(tmp.version));
 	}
-	/* Selesai: Spoof Uname Hardcoded (Legacy) */
+	/* Selesai: Spoof Uname Lebih Aman */
 
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
@@ -1326,12 +1326,12 @@ SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
 	memcpy(&tmp.machine, &utsname()->machine, __OLD_UTS_LEN);
 	up_read(&uts_sem);
 
-	/* Mulai: Spoof Uname Hardcoded (OldOld) */
-	if (current_uid().val >= 10000) {
-		strncpy(tmp.release, "4.19.0-perf", __OLD_UTS_LEN);
-		strncpy(tmp.version, "#1 SMP PREEMPT", __OLD_UTS_LEN);
+/* Mulai: Spoof Uname Lebih Aman */
+	if (from_kuid_munged(current_user_ns(), current_uid()) >= 10000) {
+		strlcpy(tmp.release, "4.19.0-perf", sizeof(tmp.release));
+		strlcpy(tmp.version, "#1 SMP PREEMPT", sizeof(tmp.version));
 	}
-	/* Selesai: Spoof Uname Hardcoded (OldOld) */
+	/* Selesai: Spoof Uname Lebih Aman */
 
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
