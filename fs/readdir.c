@@ -20,11 +20,6 @@
 #include <linux/syscalls.h>
 #include <linux/unistd.h>
 #include <linux/compat.h>
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-#include <linux/susfs_def.h>
-extern int susfs_get_data_path(struct path *path);
-extern bool susfs_is_inode_sus_path(struct inode *inode);
-#endif
 
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #include <linux/susfs_def.h>
@@ -37,9 +32,6 @@ extern bool susfs_is_base_dentry_sdcard_dir(struct dentry* base);
 
 #include <linux/uaccess.h>
 
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-extern int susfs_sus_ino_for_filldir64(unsigned long ino);
-#endif
 int iterate_dir(struct file *file, struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
@@ -247,10 +239,6 @@ orig_flow:
 		error = buf.result;
 
 	fdput_pos(f);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!path_err)
-		path_put(&path);
-#endif
 	return error;
 }
 
@@ -293,11 +281,6 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
 	struct inode *inode;
 #endif
 
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
-		return 0;
-	}
-#endif
 	buf->error = verify_dirent_name(name, namlen);
 	if (unlikely(buf->error))
 		return buf->error;
@@ -338,18 +321,6 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	inode = ilookup(buf->sb, ino);
-	if (!inode) {
-		goto orig_flow;
-	}
-	if (susfs_is_inode_sus_path(inode)) {
-		iput(inode);
-		return 0;
-	}
-	iput(inode);
-orig_flow:
-#endif
 	dirent = buf->current_dir;
 	if (__put_user(d_ino, &dirent->d_ino))
 		goto efault;
@@ -425,10 +396,6 @@ orig_flow:
 			error = count - buf.count;
 	}
 	fdput_pos(f);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!path_err)
-		path_put(&path);
-#endif
 	return error;
 }
 
@@ -457,11 +424,6 @@ static int filldir64(struct dir_context *ctx, const char *name, int namlen,
 	struct inode *inode;
 #endif
 
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) && susfs_sus_ino_for_filldir64(ino)) {
-		return 0;
-	}
-#endif
 	buf->error = verify_dirent_name(name, namlen);
 	if (unlikely(buf->error))
 		return buf->error;
@@ -497,18 +459,6 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	inode = ilookup(buf->sb, ino);
-	if (!inode) {
-		goto orig_flow;
-	}
-	if (susfs_is_inode_sus_path(inode)) {
-		iput(inode);
-		return 0;
-	}
-	iput(inode);
-orig_flow:
-#endif
 	dirent = buf->current_dir;
 	if (__put_user(ino, &dirent->d_ino))
 		goto efault;
@@ -587,10 +537,6 @@ orig_flow:
 			error = count - buf.count;
 	}
 	fdput_pos(f);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!path_err)
-		path_put(&path);
-#endif
 	return error;
 }
 
@@ -724,10 +670,6 @@ orig_flow:
 		error = buf.result;
 
 	fdput_pos(f);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!path_err)
-		path_put(&path);
-#endif
 	return error;
 }
 
@@ -802,18 +744,6 @@ orig_flow:
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	inode = ilookup(buf->sb, ino);
-	if (!inode) {
-		goto orig_flow;
-	}
-	if (susfs_is_inode_sus_path(inode)) {
-		iput(inode);
-		return 0;
-	}
-	iput(inode);
-orig_flow:
-#endif
 	dirent = buf->current_dir;
 	if (__put_user(d_ino, &dirent->d_ino))
 		goto efault;
@@ -888,10 +818,6 @@ orig_flow:
 			error = count - buf.count;
 	}
 	fdput_pos(f);
-#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-	if (!path_err)
-		path_put(&path);
-#endif
 	return error;
 }
 #endif
