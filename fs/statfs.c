@@ -11,6 +11,7 @@
 #include <linux/compat.h>
 #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 #include <linux/susfs_def.h>
+#include "mount.h"
 #endif
 #include "internal.h"
 
@@ -69,14 +70,6 @@ static int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
 		buf->f_frsize = buf->f_bsize;
 	return retval;
 }
-
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-extern struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt);
-#endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern int susfs_open_redirect_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf);
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 int vfs_statfs(const struct path *path, struct kstatfs *buf)
 {
