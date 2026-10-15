@@ -28,19 +28,24 @@ on:
         type: string
         default: 'diantk2'
       commit_hashes:
-        description: 'Daftar Commit Hash (pisahkan dengan spasi)'
-        required: true
+        description: '[MODE 1] Daftar Hash Commit (Kosongkan jika pakai mode hari)'
+        required: false
         type: string
         default: ''
-      retro_days:
-        description: 'Mundurkan commit berapa hari? (Contoh: 60 untuk 2 bulan lalu)'
-        required: true
+      fetch_days:
+        description: '[MODE 2] Ambil dari X hari terakhir (Kosongkan jika pakai mode hash)'
+        required: false
         type: string
-        default: '60'
+        default: '7'
+      retro_days:
+        description: '[OPSIONAL] Mundurkan tanggal commit X hari? (Isi 0 jika tidak perlu)'
+        required: false
+        type: string
+        default: '0'
 
 jobs:
   force-apply-commits:
-    runs-on: ${{ github.event.inputs.runner }}
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
 
@@ -57,92 +62,93 @@ jobs:
           git config --global user.email "action@github.com"
           git config --global --add safe.directory '*'
 
-      - name: Proses Cherry-Pick dan Force Push (Retroactive)
+      - name: Proses Cherry-Pick dan Force Push
         run: |
-          # Menyimpan input ke dalam variabel bash
           EXTERNAL_REPO="${{ inputs.external_repo }}"
           EXTERNAL_BRANCH="${{ inputs.external_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
           COMMITS_INPUT="${{ inputs.commit_hashes }}"
+          FETCH_DAYS="${{ inputs.fetch_days }}"
           RETRO_DAYS="${{ inputs.retro_days }}"
 
-          echo "Mengambil dari: $EXTERNAL_REPO (Branch: $EXTERNAL_BRANCH)"
-          echo "Target push ke: $TARGET_BRANCH"
-          echo "Memundurkan waktu commit sebesar: $RETRO_DAYS hari"
+          # 1. Validasi Input Eksklusif
+          if [ -z "$COMMITS_INPUT" ] && [ -z "$FETCH_DAYS" ]; then
+            echo "❌ ERROR: Anda harus mengisi salah satu: 'Daftar Hash' ATAU 'Ambil dari X hari'."
+            exit 1
+          fi
 
-          # 1. Konfigurasi Remote Repo Orang Lain
+          echo "Mempersiapkan repository eksternal..."
           git remote remove custom_repo 2>/dev/null || true
           git remote add custom_repo "$EXTERNAL_REPO"
-          
-          # Fetch HANYA branch yang ditentukan dari repo eksternal
           git fetch custom_repo "$EXTERNAL_BRANCH"
-          # Fetch data dari repo kita sendiri
           git fetch origin
 
-          # 2. Pindah ke branch Target
+          # 2. Pindah ke branch target
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
           else
-            # Jika branch belum ada, buat baru
             git checkout -b "$TARGET_BRANCH"
           fi
 
-          # 3. Mengubah input string commit menjadi array (dipisahkan oleh spasi)
-          read -r -a COMMITS <<< "$COMMITS_INPUT"
+          # 3. LOGIKA PEMILIHAN COMMIT (Hari vs Hash)
+          if [ -n "$COMMITS_INPUT" ]; then
+            echo "========================================"
+            echo "🔍 MENGGUNAKAN MODE HASH"
+            echo "========================================"
+            read -r -a COMMITS <<< "$COMMITS_INPUT"
+          else
+            echo "========================================"
+            echo "🔍 MENGGUNAKAN MODE HARI ($FETCH_DAYS hari terakhir)"
+            echo "========================================"
+            # Ambil hash commit secara otomatis dari X hari terakhir, urutkan dari terlama ke terbaru (--reverse)
+            COMMIT_LIST=$(git log --since="$FETCH_DAYS days ago" --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
+            read -r -a COMMITS <<< "$COMMIT_LIST"
+            
+            if [ ${#COMMITS[@]} -eq 0 ] || [ -z "$COMMIT_LIST" ]; then
+              echo "❌ Tidak ada commit yang ditemukan dalam $FETCH_DAYS hari terakhir di branch $EXTERNAL_BRANCH."
+              exit 0
+            fi
+            echo "Ditemukan ${#COMMITS[@]} commit yang akan ditarik secara otomatis."
+          fi
 
-          # Siapkan array untuk menampung log keberhasilan/kegagalan
           SUCCESS_COMMITS=()
           FAILED_COMMITS=()
-          
-          # Counter untuk menambah menit agar commit tetap berurutan
           TIME_OFFSET=0
 
-          # 4. Cherry-pick Loop dengan Error Handling dan Manipulasi Waktu
+          # 4. Loop Eksekusi Cherry-Pick
           for commit in "${COMMITS[@]}"; do
             if [ -n "$commit" ]; then
               echo "----------------------------------------"
-              echo "Mencoba menerapkan commit: $commit"
+              echo "Menerapkan commit: $commit"
               
-              # Gunakan if untuk menangkap exit code dari git cherry-pick
               if git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"; then
                 
-                # Menghitung tanggal mundur (Masa lalu + offset menit)
-                PAST_DATE=$(date -d "$RETRO_DAYS days ago + $TIME_OFFSET minutes" --iso-8601=seconds)
+                # Logika Spoofing Waktu Mundur
+                if [ -n "$RETRO_DAYS" ] && [ "$RETRO_DAYS" -gt 0 ]; then
+                  PAST_DATE=$(date -d "$RETRO_DAYS days ago + $TIME_OFFSET minutes" --iso-8601=seconds)
+                  GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
+                  echo "✅ BERHASIL (Mundur ke: $PAST_DATE)"
+                else
+                  echo "✅ BERHASIL (Tanggal asli dipertahankan)"
+                fi
                 
-                # Memanipulasi tanggal commit yang baru saja di-cherry-pick
-                GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
-                
-                echo "✅ BERHASIL: Commit $commit diterapkan pada $PAST_DATE"
                 SUCCESS_COMMITS+=("$commit")
-                
-                # Tambah offset menit untuk commit berikutnya
                 TIME_OFFSET=$((TIME_OFFSET + 1))
               else
-                echo "❌ GAGAL/FATAL: Commit $commit gagal diterapkan."
+                echo "❌ GAGAL: Terjadi konflik/error."
                 FAILED_COMMITS+=("$commit")
-                
-                # Wajib melakukan abort agar tree kembali bersih untuk commit selanjutnya.
                 git cherry-pick --abort || true
               fi
             fi
           done
 
-          # 5. Cetak Laporan Eksekusi
+          # 5. Laporan Eksekusi
           echo "========================================"
-          echo "📊 LAPORAN HASIL CHERRY-PICK MUNDUR"
-          echo "========================================"
-          echo "✅ Total Berhasil: ${#SUCCESS_COMMITS[@]}"
-          for sc in "${SUCCESS_COMMITS[@]}"; do
-            echo "   - $sc"
-          done
-          
-          echo ""
-          echo "❌ Total Gagal: ${#FAILED_COMMITS[@]}"
-          for fc in "${FAILED_COMMITS[@]}"; do
-            echo "   - $fc"
-          done
+          echo "📊 LAPORAN HASIL CHERRY-PICK"
+          echo "✅ Berhasil: ${#SUCCESS_COMMITS[@]}"
+          echo "❌ Gagal: ${#FAILED_COMMITS[@]}"
           echo "========================================"
 
-          # 6. Push ke branch target di origin (repo Anda sendiri)
+          # 6. Push ke repositori
           echo "Mendorong perubahan ke origin/$TARGET_BRANCH..."
           git push origin "$TARGET_BRANCH" --force
