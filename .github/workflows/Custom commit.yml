@@ -31,7 +31,12 @@ on:
         description: 'Daftar Commit Hash (pisahkan dengan spasi)'
         required: true
         type: string
-        default: '4fe189ecabd0565a0c3a95d0055e7d53480a72e9 20cb373a456560bac9e4af4888c899aed786f74e da17e11893d564a8b9fc2859917a7d4ca31d7ba4 d0f3b30e00cb5a1a0fe76bd445400299db619e53 a710a7e5f9e739ea6365e5fbc1831253444ff168'
+        default: ''
+      retro_days:
+        description: 'Mundurkan commit berapa hari? (Contoh: 60 untuk 2 bulan lalu)'
+        required: true
+        type: string
+        default: '60'
 
 jobs:
   force-apply-commits:
@@ -52,16 +57,18 @@ jobs:
           git config --global user.email "action@github.com"
           git config --global --add safe.directory '*'
 
-      - name: Proses Cherry-Pick dan Force Push
+      - name: Proses Cherry-Pick dan Force Push (Retroactive)
         run: |
           # Menyimpan input ke dalam variabel bash
           EXTERNAL_REPO="${{ inputs.external_repo }}"
           EXTERNAL_BRANCH="${{ inputs.external_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
           COMMITS_INPUT="${{ inputs.commit_hashes }}"
+          RETRO_DAYS="${{ inputs.retro_days }}"
 
           echo "Mengambil dari: $EXTERNAL_REPO (Branch: $EXTERNAL_BRANCH)"
           echo "Target push ke: $TARGET_BRANCH"
+          echo "Memundurkan waktu commit sebesar: $RETRO_DAYS hari"
 
           # 1. Konfigurasi Remote Repo Orang Lain
           git remote remove custom_repo 2>/dev/null || true
@@ -86,8 +93,11 @@ jobs:
           # Siapkan array untuk menampung log keberhasilan/kegagalan
           SUCCESS_COMMITS=()
           FAILED_COMMITS=()
+          
+          # Counter untuk menambah menit agar commit tetap berurutan
+          TIME_OFFSET=0
 
-          # 4. Cherry-pick Loop dengan Error Handling
+          # 4. Cherry-pick Loop dengan Error Handling dan Manipulasi Waktu
           for commit in "${COMMITS[@]}"; do
             if [ -n "$commit" ]; then
               echo "----------------------------------------"
@@ -95,14 +105,23 @@ jobs:
               
               # Gunakan if untuk menangkap exit code dari git cherry-pick
               if git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"; then
-                echo "✅ BERHASIL: Commit $commit berhasil diterapkan."
+                
+                # Menghitung tanggal mundur (Masa lalu + offset menit)
+                PAST_DATE=$(date -d "$RETRO_DAYS days ago + $TIME_OFFSET minutes" --iso-8601=seconds)
+                
+                # Memanipulasi tanggal commit yang baru saja di-cherry-pick
+                GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
+                
+                echo "✅ BERHASIL: Commit $commit diterapkan pada $PAST_DATE"
                 SUCCESS_COMMITS+=("$commit")
+                
+                # Tambah offset menit untuk commit berikutnya
+                TIME_OFFSET=$((TIME_OFFSET + 1))
               else
                 echo "❌ GAGAL/FATAL: Commit $commit gagal diterapkan."
                 FAILED_COMMITS+=("$commit")
                 
                 # Wajib melakukan abort agar tree kembali bersih untuk commit selanjutnya.
-                # '|| true' digunakan agar script tidak crash jika errornya bukan karena conflict (misal hash tidak ditemukan).
                 git cherry-pick --abort || true
               fi
             fi
@@ -110,7 +129,7 @@ jobs:
 
           # 5. Cetak Laporan Eksekusi
           echo "========================================"
-          echo "📊 LAPORAN HASIL CHERRY-PICK"
+          echo "📊 LAPORAN HASIL CHERRY-PICK MUNDUR"
           echo "========================================"
           echo "✅ Total Berhasil: ${#SUCCESS_COMMITS[@]}"
           for sc in "${SUCCESS_COMMITS[@]}"; do
@@ -125,7 +144,5 @@ jobs:
           echo "========================================"
 
           # 6. Push ke branch target di origin (repo Anda sendiri)
-          # Opsional: Bisa menambahkan kondisi jika semua gagal tidak perlu push, 
-          # tapi saat ini script akan tetap push apa yang berhasil masuk.
           echo "Mendorong perubahan ke origin/$TARGET_BRANCH..."
           git push origin "$TARGET_BRANCH" --force
