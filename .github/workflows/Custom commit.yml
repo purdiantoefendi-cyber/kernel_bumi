@@ -86,6 +86,8 @@ jobs:
           echo "Mempersiapkan repository eksternal..."
           git remote remove custom_repo 2>/dev/null || true
           git remote add custom_repo "$EXTERNAL_REPO"
+          
+          # Gunakan fetch spesifik ke branch target agar masuk ke FETCH_HEAD
           git fetch custom_repo "$EXTERNAL_BRANCH"
           git fetch origin
 
@@ -106,20 +108,21 @@ jobs:
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE TANGGAL"
             if [ -n "$FETCH_UNTIL" ]; then
-              echo "Rentang: $FETCH_SINCE sampai $FETCH_UNTIL"
-              GIT_UNTIL_ARG="--until=$FETCH_UNTIL"
+              # PERBAIKAN 1: Memaksa Git membaca hingga akhir hari (23:59:59)
+              echo "Rentang: $FETCH_SINCE sampai $FETCH_UNTIL (Pukul 23:59:59)"
+              GIT_UNTIL_ARG="--until=${FETCH_UNTIL}T23:59:59"
             else
               echo "Rentang: Sejak $FETCH_SINCE sampai sekarang"
               GIT_UNTIL_ARG=""
             fi
             echo "========================================"
             
-            # Ambil hash commit berdasarkan rentang tanggal, urutkan dari terlama ke terbaru (--reverse)
-            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
+            # PERBAIKAN 2: Menggunakan FETCH_HEAD agar data mentah langsung terbaca
+            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --reverse --format="%H" FETCH_HEAD)
             read -r -a COMMITS <<< "$COMMIT_LIST"
             
             if [ ${#COMMITS[@]} -eq 0 ] || [ -z "$COMMIT_LIST" ]; then
-              echo "❌ Tidak ada commit yang ditemukan pada rentang tanggal tersebut di branch $EXTERNAL_BRANCH."
+              echo "❌ Tidak ada commit yang ditemukan pada rentang tanggal tersebut."
               exit 0
             fi
             echo "Ditemukan ${#COMMITS[@]} commit yang akan ditarik secara otomatis."
