@@ -28,17 +28,22 @@ on:
         type: string
         default: 'diantk2'
       commit_hashes:
-        description: '[MODE 1] Daftar Hash Commit (Kosongkan jika pakai mode hari)'
+        description: '[MODE 1] Daftar Hash Commit (Kosongkan jika pakai mode tanggal)'
         required: false
         type: string
         default: ''
-      fetch_days:
-        description: '[MODE 2] Ambil dari X hari terakhir (Kosongkan jika pakai mode hash)'
+      fetch_since:
+        description: '[MODE 2] Mulai dari tanggal (Format: YYYY-MM-DD, contoh: 2026-01-01)'
         required: false
         type: string
-        default: '7'
+        default: ''
+      fetch_until:
+        description: '[MODE 2] Sampai tanggal (Opsional. Format: YYYY-MM-DD, contoh: 2026-01-31)'
+        required: false
+        type: string
+        default: ''
       retro_days:
-        description: '[OPSIONAL] Mundurkan tanggal commit X hari? (Isi 0 jika tidak perlu)'
+        description: '[OPSIONAL] Mundurkan tanggal hasil cherry-pick X hari? (Isi 0 jika tidak perlu)'
         required: false
         type: string
         default: '0'
@@ -68,12 +73,13 @@ jobs:
           EXTERNAL_BRANCH="${{ inputs.external_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
           COMMITS_INPUT="${{ inputs.commit_hashes }}"
-          FETCH_DAYS="${{ inputs.fetch_days }}"
+          FETCH_SINCE="${{ inputs.fetch_since }}"
+          FETCH_UNTIL="${{ inputs.fetch_until }}"
           RETRO_DAYS="${{ inputs.retro_days }}"
 
           # 1. Validasi Input Eksklusif
-          if [ -z "$COMMITS_INPUT" ] && [ -z "$FETCH_DAYS" ]; then
-            echo "❌ ERROR: Anda harus mengisi salah satu: 'Daftar Hash' ATAU 'Ambil dari X hari'."
+          if [ -z "$COMMITS_INPUT" ] && [ -z "$FETCH_SINCE" ]; then
+            echo "❌ ERROR: Anda harus mengisi salah satu: 'Daftar Hash' ATAU 'Mulai dari tanggal'."
             exit 1
           fi
 
@@ -90,7 +96,7 @@ jobs:
             git checkout -b "$TARGET_BRANCH"
           fi
 
-          # 3. LOGIKA PEMILIHAN COMMIT (Hari vs Hash)
+          # 3. LOGIKA PEMILIHAN COMMIT (Tanggal vs Hash)
           if [ -n "$COMMITS_INPUT" ]; then
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE HASH"
@@ -98,14 +104,22 @@ jobs:
             read -r -a COMMITS <<< "$COMMITS_INPUT"
           else
             echo "========================================"
-            echo "🔍 MENGGUNAKAN MODE HARI ($FETCH_DAYS hari terakhir)"
+            echo "🔍 MENGGUNAKAN MODE TANGGAL"
+            if [ -n "$FETCH_UNTIL" ]; then
+              echo "Rentang: $FETCH_SINCE sampai $FETCH_UNTIL"
+              GIT_UNTIL_ARG="--until=$FETCH_UNTIL"
+            else
+              echo "Rentang: Sejak $FETCH_SINCE sampai sekarang"
+              GIT_UNTIL_ARG=""
+            fi
             echo "========================================"
-            # Ambil hash commit secara otomatis dari X hari terakhir, urutkan dari terlama ke terbaru (--reverse)
-            COMMIT_LIST=$(git log --since="$FETCH_DAYS days ago" --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
+            
+            # Ambil hash commit berdasarkan rentang tanggal, urutkan dari terlama ke terbaru (--reverse)
+            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
             read -r -a COMMITS <<< "$COMMIT_LIST"
             
             if [ ${#COMMITS[@]} -eq 0 ] || [ -z "$COMMIT_LIST" ]; then
-              echo "❌ Tidak ada commit yang ditemukan dalam $FETCH_DAYS hari terakhir di branch $EXTERNAL_BRANCH."
+              echo "❌ Tidak ada commit yang ditemukan pada rentang tanggal tersebut di branch $EXTERNAL_BRANCH."
               exit 0
             fi
             echo "Ditemukan ${#COMMITS[@]} commit yang akan ditarik secara otomatis."
