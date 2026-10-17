@@ -1,0 +1,79 @@
+name: Export Custom Files to Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch Target (Contoh: diantk2, master, spoof)'
+        required: true
+        type: string
+        default: 'diantk2'
+      artifact_name:
+        description: 'Nama File Artefak ZIP'
+        required: true
+        type: string
+        default: 'Kernel_Extreme_Source'
+
+jobs:
+  export-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 1
+
+      - name: 📂 Persiapkan Direktori dan Salin File
+        run: |
+          echo "Membuat direktori penampung..."
+          mkdir -p export_dir
+          
+          # Daftar file dan direktori custom yang akan disalin
+          FILES=(
+            "crypto/wkdm_lz4hc.c"
+            "crypto/wkdm_lz4hc_main.c"
+            "crypto/wkdm_lz4hc_arm64.S"
+            "crypto/lz4hc.c"
+            "block/Kconfig.iosched"
+            "block/mq_gamer.c"
+            "drivers/block/zram/zram_drv.c"
+            "mm/vmpressure.c"
+            "mm/vmscan.c"
+            "mm/page_alloc.c"
+            "mm/oom_kill.c"
+            "arch/arm64/configs/bumi_defconfig"
+            "arch/arm64/configs/bumi2_defconfig"
+            "arch/arm64/configs/bumi_ksu_defconfig"
+            "arch/arm64/configs/earth_defconfig"
+            "drivers/power/supply/mediatek/mtk_charger.c"
+            "drivers/power/supply/mediatek/mtk_battery_core.c"
+            "drivers/power/supply/mediatek/sgm4151x.c"
+            "drivers/power/supply/mediatek/eta696x_charger.c"
+            "drivers/cpufreq/cpufreq_schedutil.c"
+            "drivers/cpufreq/cpufreq_schedutil_plus.c"
+            "drivers/gpu/mediatek/mtk_gpufreq_core.c"
+            "drivers/gpu/mediatek/mtk_picachu.c"
+            "arch/arm64/boot/dts/mediatek/mt6768.dts"
+            "net/ipv4/tcp_input.c"
+          )
+
+          # Eksekusi penyalinan sambil mempertahankan struktur folder
+          for file in "${FILES[@]}"; do
+            if [ -f "$file" ]; then
+              # Buat struktur foldernya di dalam export_dir
+              mkdir -p "export_dir/$(dirname "$file")"
+              # Salin filenya
+              cp "$file" "export_dir/$file"
+              echo "✅ Ditemukan & disalin: $file"
+            else
+              echo "⚠️ PERINGATAN: File tidak ditemukan di branch ini: $file"
+            fi
+          done
+
+      - name: 📦 Kompres dan Upload ke Artifact (ZIP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: export_dir/
+          retention-days: 7
