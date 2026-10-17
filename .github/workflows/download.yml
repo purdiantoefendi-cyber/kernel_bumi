@@ -19,10 +19,15 @@ on:
         type: string
         default: 'crypto/wkdm_lz4hc.c block/mq_gamer.c'
       commit_message:
-        description: 'Pesan Commit'
+        description: 'Nama / Pesan Commit'
         required: true
         type: string
-        default: 'Sync custom files from source branch'
+        default: 'feat: add custom performance files'
+      commit_author:
+        description: 'Nama Pembuat Commit (Author)'
+        required: true
+        type: string
+        default: 'DianTk'
 
 jobs:
   transfer-files:
@@ -40,24 +45,21 @@ jobs:
 
       - name: ⚙️ Konfigurasi Git User
         run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
+          git config --global user.name "${{ inputs.commit_author }}"
+          git config --global user.email "bot@github.action.com"
           git config --global --add safe.directory '*'
 
       - name: 🔄 Tarik File dari Branch Sumber & Pertahankan Folder
         env:
-          # Mengambil input daftar file dari UI GitHub
           FILE_LIST_INPUT: ${{ inputs.file_list }}
         run: |
           SOURCE_BRANCH="${{ inputs.source_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
 
           echo "Mengambil data dari origin/$SOURCE_BRANCH..."
-          # Fetch branch sumber agar Git mengenali isinya
           git fetch origin "$SOURCE_BRANCH"
 
-          # Membaca daftar file dari input (Mendukung spasi dan baris baru/Enter)
-          # Ini juga akan mengabaikan baris kosong jika Anda tidak sengaja menekan enter berlebih
+          # Membaca daftar file
           mapfile -t FILES < <(echo "$FILE_LIST_INPUT" | tr ' ' '\n' | grep -v '^$')
 
           echo "========================================"
@@ -68,15 +70,10 @@ jobs:
           FAIL_COUNT=0
 
           for file in "${FILES[@]}"; do
-            # Bersihkan karakter carriage return (\r) jika Anda copas dari Windows Notepad
             file=$(echo "$file" | tr -d '\r')
-            
-            # Jika baris kosong, lewati
             if [ -z "$file" ]; then continue; fi
 
-            # Cek apakah file tersebut benar-benar ada di branch sumber
             if git ls-tree -r "origin/$SOURCE_BRANCH" --name-only | grep -q "^$file$"; then
-              # Tarik file beserta struktur foldernya
               git checkout "origin/$SOURCE_BRANCH" -- "$file"
               echo "✅ Berhasil ditarik: $file"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
@@ -95,7 +92,6 @@ jobs:
           TARGET_BRANCH="${{ inputs.target_branch }}"
           COMMIT_MSG="${{ inputs.commit_message }}"
 
-          # Cek apakah ada perubahan (file baru ditarik atau ada modifikasi)
           if [[ -n $(git status --porcelain) ]]; then
             echo "Mendeteksi perubahan, menyiapkan commit..."
             git add .
@@ -103,5 +99,5 @@ jobs:
             git push origin "$TARGET_BRANCH"
             echo "✅ Selesai! Semua file berhasil dimasukkan ke branch $TARGET_BRANCH."
           else
-            echo "ℹ️ Tidak ada perubahan. File di branch $TARGET_BRANCH sudah sama persis dengan $SOURCE_BRANCH."
+            echo "ℹ️ Tidak ada perubahan. File di branch $TARGET_BRANCH sudah sama persis."
           fi
