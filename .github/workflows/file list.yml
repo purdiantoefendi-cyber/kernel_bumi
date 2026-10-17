@@ -1,0 +1,100 @@
+name: List Files Edited on wk
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - wk
+
+permissions:
+  contents: read
+
+jobs:
+  list-files:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full repository history
+        uses: actions/checkout@v4
+        with:
+          ref: wk
+          fetch-depth: 0
+
+      - name: Generate list of files
+        shell: bash
+        run: |
+          set -e
+
+          AUTHOR="purdiantoefendi-cyber"
+          UNTIL_DATE="2026-09-30 23:59:59"
+
+          echo "Repository : $(git remote get-url origin)"
+          echo "Branch     : wk"
+          echo "Author     : $AUTHOR"
+          echo "Until      : $UNTIL_DATE"
+          echo
+
+          git log \
+            wk \
+            --author="$AUTHOR" \
+            --until="$UNTIL_DATE" \
+            --format="%H" > commits.txt
+
+          echo "Jumlah commit:"
+          wc -l < commits.txt
+          echo
+
+          : > files-raw.txt
+
+          while read -r COMMIT; do
+            echo "Processing $COMMIT"
+
+            git diff-tree \
+              --no-commit-id \
+              --name-only \
+              -r \
+              -m \
+              "$COMMIT" >> files-raw.txt
+
+          done < commits.txt
+
+          sort -u files-raw.txt > daftar-file-wk.txt
+
+          echo
+          echo "======================================"
+          echo "DAFTAR FILE YANG PERNAH DIEDIT"
+          echo "======================================"
+
+          cat daftar-file-wk.txt
+
+          echo
+          echo "======================================"
+          echo "Total file unik:"
+          wc -l < daftar-file-wk.txt
+
+      - name: Generate grouped list
+        shell: bash
+        run: |
+          set -e
+
+          {
+            echo "# File yang pernah diedit di branch wk"
+            echo
+            echo "- Author: purdiantoefendi-cyber"
+            echo "- Sampai: 30 September 2026"
+            echo
+            echo '```text'
+            cat daftar-file-wk.txt
+            echo '```'
+          } > daftar-file-wk.md
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: daftar-file-branch-wk
+          path: |
+            daftar-file-wk.txt
+            daftar-file-wk.md
+            commits.txt
+            files-raw.txt
+          retention-days: 90
