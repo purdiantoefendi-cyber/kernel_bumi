@@ -377,3 +377,12 @@ unsigned int mt_ppm_get_leakage_mw(enum ppm_cluster_lkg cluster)
 
 	return mw;
 }
+	/* DUMMY FIX FOR PPM THERMAL OFF */
+int get_immediate_cpuB_wrap(void)
+{
+    return 0; 
+}
+int get_immediate_cpuL_wrap(void)
+{
+    return 0; 
+}

@@ -1,819 +1,534 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- *  MQ Deadline i/o scheduler - adaptation of the legacy deadline scheduler,
- *  for the blk-mq scheduling framework
- *
- *  Copyright (C) 2016 Jens Axboe <axboe@kernel.dk>
+ * Gamer I/O Scheduler (Disguised as MQ-Deadline)
+ * Based on Kyber Architecture
+ * Configured for Brutal Performance & Gaming Load
  */
 #include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
 #include <linux/elevator.h>
-#include <linux/bio.h>
 #include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/init.h>
-#include <linux/compiler.h>
-#include <linux/rbtree.h>
 #include <linux/sbitmap.h>
 
 #include "blk.h"
 #include "blk-mq.h"
-#include "blk-mq-debugfs.h"
-#include "blk-mq-tag.h"
 #include "blk-mq-sched.h"
+#include "blk-mq-tag.h"
+#include "blk-stat.h"
 
-/*
- * See Documentation/block/deadline-iosched.txt
- */
-static const int read_expire = HZ / 2;  /* max time before a read is submitted. */
-static const int write_expire = 5 * HZ; /* ditto for writes, these limits are SOFT! */
-static const int writes_starved = 2;    /* max times reads can starve a write */
-static const int fifo_batch = 16;       /* # of sequential requests treated as one
-				     by the above parameters. For throughput. */
+enum { GAMER_READ, GAMER_SYNC_WRITE, GAMER_OTHER, GAMER_NUM_DOMAINS };
+enum { GAMER_MIN_DEPTH = 1024, GAMER_ASYNC_PERCENT = 15 }; /* Kedalaman maksimum dinaikkan, async dicekik */
 
-struct deadline_data {
-	/*
-	 * run time data
-	 */
-
-	/*
-	 * requests (deadline_rq s) are present on both sort_list and fifo_list
-	 */
-	struct rb_root sort_list[2];
-	struct list_head fifo_list[2];
-
-	/*
-	 * next in sort order. read, write or both are NULL
-	 */
-	struct request *next_rq[2];
-	unsigned int batching;		/* number of sequential requests made */
-	unsigned int starved;		/* times reads have starved writes */
-
-	/*
-	 * settings that change how the i/o scheduler behaves
-	 */
-	int fifo_expire[2];
-	int fifo_batch;
-	int writes_starved;
-	int front_merges;
-
-	spinlock_t lock;
-	spinlock_t zone_lock;
-	struct list_head dispatch;
+static const unsigned int gamer_depth[] = {
+        [GAMER_READ] = 1024, [GAMER_SYNC_WRITE] = 32, [GAMER_OTHER] = 16,
 };
 
-static inline struct rb_root *
-deadline_rb_root(struct deadline_data *dd, struct request *rq)
+static const unsigned int gamer_batch_size[] = {
+        [GAMER_READ] = 256, [GAMER_SYNC_WRITE] = 4, [GAMER_OTHER] = 4, /* Rasio agresif 256:4 */
+};
+
+struct gamer_ctx_queue {
+        spinlock_t lock;
+        struct list_head rq_list[GAMER_NUM_DOMAINS];
+} ____cacheline_aligned_in_smp;
+
+struct gamer_queue_data {
+        struct request_queue *q;
+        struct blk_stat_callback *cb;
+        struct sbitmap_queue domain_tokens[GAMER_NUM_DOMAINS];
+        unsigned int async_depth;
+        u64 read_lat_nsec, write_lat_nsec;
+};
+
+struct gamer_hctx_data {
+        spinlock_t lock;
+        struct list_head rqs[GAMER_NUM_DOMAINS];
+        unsigned int cur_domain;
+        unsigned int batching;
+        struct gamer_ctx_queue *kcqs;
+        struct sbitmap kcq_map[GAMER_NUM_DOMAINS];
+        wait_queue_entry_t domain_wait[GAMER_NUM_DOMAINS];
+        struct sbq_wait_state *domain_ws[GAMER_NUM_DOMAINS];
+        atomic_t wait_index[GAMER_NUM_DOMAINS];
+};
+
+static int gamer_domain_wake(wait_queue_entry_t *wait, unsigned mode, int flags, void *key);
+
+static unsigned int gamer_sched_domain(unsigned int op)
 {
-	return &dd->sort_list[rq_data_dir(rq)];
+        if ((op & REQ_OP_MASK) == REQ_OP_READ) return GAMER_READ;
+        else if ((op & REQ_OP_MASK) == REQ_OP_WRITE && op_is_sync(op)) return GAMER_SYNC_WRITE;
+        else return GAMER_OTHER;
 }
 
-/*
- * get the request after `rq' in sector-sorted order
- */
-static inline struct request *
-deadline_latter_request(struct request *rq)
+enum { NONE = 0, GOOD = 1, GREAT = 2, BAD = -1, AWFUL = -2 };
+#define IS_GOOD(status) ((status) > 0)
+#define IS_BAD(status) ((status) < 0)
+
+static int gamer_lat_status(struct blk_stat_callback *cb, unsigned int sched_domain, u64 target)
 {
-	struct rb_node *node = rb_next(&rq->rb_node);
-
-	if (node)
-		return rb_entry_rq(node);
-
-	return NULL;
+        u64 latency;
+        if (!cb->stat[sched_domain].nr_samples) return NONE;
+        latency = cb->stat[sched_domain].mean;
+        if (latency >= 2 * target) return AWFUL;
+        else if (latency > target) return BAD;
+        else if (latency <= target / 2) return GREAT;
+        else return GOOD;
 }
 
-static void
-deadline_add_rq_rb(struct deadline_data *dd, struct request *rq)
+static void gamer_adjust_rw_depth(struct gamer_queue_data *kqd, unsigned int sched_domain, int this_status, int other_status)
 {
-	struct rb_root *root = deadline_rb_root(dd, rq);
+        unsigned int orig_depth, depth;
+        if (this_status == NONE || (IS_GOOD(this_status) && IS_GOOD(other_status)) || (IS_BAD(this_status) && IS_BAD(other_status))) return;
 
-	elv_rb_add(root, rq);
+        orig_depth = depth = kqd->domain_tokens[sched_domain].sb.depth;
+        if (other_status == NONE) depth++;
+        else {
+                switch (this_status) {
+                case GOOD: depth -= max(depth / 8, 1U); break;
+                case GREAT: depth -= max(depth / 4, 1U); break;
+                case BAD: depth++; break;
+                case AWFUL: depth += 2; break;
+                }
+        }
+        depth = clamp(depth, 1U, gamer_depth[sched_domain]);
+        if (depth != orig_depth) sbitmap_queue_resize(&kqd->domain_tokens[sched_domain], depth);
 }
 
-static inline void
-deadline_del_rq_rb(struct deadline_data *dd, struct request *rq)
+static void gamer_adjust_other_depth(struct gamer_queue_data *kqd, int read_status, int write_status, bool have_samples)
 {
-	const int data_dir = rq_data_dir(rq);
+        unsigned int orig_depth, depth;
+        int status;
+        orig_depth = depth = kqd->domain_tokens[GAMER_OTHER].sb.depth;
 
-	if (dd->next_rq[data_dir] == rq)
-		dd->next_rq[data_dir] = deadline_latter_request(rq);
-
-	elv_rb_del(deadline_rb_root(dd, rq), rq);
+        if (read_status == NONE && write_status == NONE) depth += 2;
+        else if (have_samples) {
+                if (read_status == NONE) status = write_status;
+                else if (write_status == NONE) status = read_status;
+                else status = max(read_status, write_status);
+                switch (status) {
+                case GREAT: depth += 2; break;
+                case GOOD: depth++; break;
+                case BAD: depth -= max(depth / 4, 1U); break;
+                case AWFUL: depth /= 2; break;
+                }
+        }
+        depth = clamp(depth, 1U, gamer_depth[GAMER_OTHER]);
+        if (depth != orig_depth) sbitmap_queue_resize(&kqd->domain_tokens[GAMER_OTHER], depth);
 }
 
-/*
- * remove rq from rbtree and fifo.
- */
-static void deadline_remove_request(struct request_queue *q, struct request *rq)
+static void gamer_stat_timer_fn(struct blk_stat_callback *cb)
 {
-	struct deadline_data *dd = q->elevator->elevator_data;
+        struct gamer_queue_data *kqd = cb->data;
+        int read_status = gamer_lat_status(cb, GAMER_READ, kqd->read_lat_nsec);
+        int write_status = gamer_lat_status(cb, GAMER_SYNC_WRITE, kqd->write_lat_nsec);
 
-	list_del_init(&rq->queuelist);
+        gamer_adjust_rw_depth(kqd, GAMER_READ, read_status, write_status);
+        gamer_adjust_rw_depth(kqd, GAMER_SYNC_WRITE, write_status, read_status);
+        gamer_adjust_other_depth(kqd, read_status, write_status, cb->stat[GAMER_OTHER].nr_samples != 0);
 
-	/*
-	 * We might not be on the rbtree, if we are doing an insert merge
-	 */
-	if (!RB_EMPTY_NODE(&rq->rb_node))
-		deadline_del_rq_rb(dd, rq);
-
-	elv_rqhash_del(q, rq);
-	if (q->last_merge == rq)
-		q->last_merge = NULL;
+        if (!blk_stat_is_active(kqd->cb) && ((IS_BAD(read_status) || IS_BAD(write_status) || kqd->domain_tokens[GAMER_OTHER].sb.depth < gamer_depth[GAMER_OTHER])))
+                blk_stat_activate_msecs(kqd->cb, 100);
 }
 
-static void dd_request_merged(struct request_queue *q, struct request *req,
-			      enum elv_merge type)
+static unsigned int gamer_sched_tags_shift(struct gamer_queue_data *kqd)
 {
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	/*
-	 * if the merge was a front merge, we need to reposition request
-	 */
-	if (type == ELEVATOR_FRONT_MERGE) {
-		elv_rb_del(deadline_rb_root(dd, req), req);
-		deadline_add_rq_rb(dd, req);
-	}
+        return kqd->q->queue_hw_ctx[0]->sched_tags->bitmap_tags.sb.shift;
 }
 
-static void dd_merged_requests(struct request_queue *q, struct request *req,
-			       struct request *next)
+static int gamer_bucket_fn(const struct request *rq)
 {
-	/*
-	 * if next expires before rq, assign its expire time to rq
-	 * and move into next position (next will be deleted) in fifo
-	 */
-	if (!list_empty(&req->queuelist) && !list_empty(&next->queuelist)) {
-		if (time_before((unsigned long)next->fifo_time,
-				(unsigned long)req->fifo_time)) {
-			list_move(&req->queuelist, &next->queuelist);
-			req->fifo_time = next->fifo_time;
-		}
-	}
-
-	/*
-	 * kill knowledge of next, this one is a goner
-	 */
-	deadline_remove_request(q, next);
+        return gamer_sched_domain(rq->cmd_flags);
 }
 
-/*
- * move an entry to dispatch queue
- */
-static void
-deadline_move_request(struct deadline_data *dd, struct request *rq)
+static struct gamer_queue_data *gamer_queue_data_alloc(struct request_queue *q)
 {
-	const int data_dir = rq_data_dir(rq);
+        struct gamer_queue_data *kqd;
+        unsigned int max_tokens, shift;
+        int ret = -ENOMEM, i;
 
-	dd->next_rq[READ] = NULL;
-	dd->next_rq[WRITE] = NULL;
-	dd->next_rq[data_dir] = deadline_latter_request(rq);
+        kqd = kmalloc_node(sizeof(*kqd), GFP_KERNEL, q->node);
+        if (!kqd) return ERR_PTR(-ENOMEM);
+        kqd->q = q;
 
-	/*
-	 * take it off the sort and fifo list
-	 */
-	deadline_remove_request(rq->q, rq);
+        kqd->cb = blk_stat_alloc_callback(gamer_stat_timer_fn, gamer_bucket_fn, GAMER_NUM_DOMAINS, kqd);
+        if (!kqd->cb) { kfree(kqd); return ERR_PTR(-ENOMEM); }
+
+        max_tokens = max_t(unsigned int, q->tag_set->queue_depth, GAMER_MIN_DEPTH);
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) {
+                ret = sbitmap_queue_init_node(&kqd->domain_tokens[i], max_tokens, -1, false, GFP_KERNEL, q->node);
+                if (ret) {
+                        while (--i >= 0) sbitmap_queue_free(&kqd->domain_tokens[i]);
+                        blk_stat_free_callback(kqd->cb);
+                        kfree(kqd);
+                        return ERR_PTR(ret);
+                }
+                sbitmap_queue_resize(&kqd->domain_tokens[i], gamer_depth[i]);
+        }
+
+        shift = gamer_sched_tags_shift(kqd);
+        kqd->async_depth = (1U << shift) * GAMER_ASYNC_PERCENT / 100U;
+        
+        /* HACK EXTREME GAMING: Target read 0.5ms, write toleransi 25ms */
+        kqd->read_lat_nsec = 500000ULL;
+        kqd->write_lat_nsec = 25000000ULL;
+
+        return kqd;
 }
 
-/*
- * deadline_check_fifo returns 0 if there are no expired requests on the fifo,
- * 1 otherwise. Requires !list_empty(&dd->fifo_list[data_dir])
- */
-static inline int deadline_check_fifo(struct deadline_data *dd, int ddir)
+static int gamer_init_sched(struct request_queue *q, struct elevator_type *e)
 {
-	struct request *rq = rq_entry_fifo(dd->fifo_list[ddir].next);
+        struct gamer_queue_data *kqd;
+        struct elevator_queue *eq = elevator_alloc(q, e);
+        if (!eq) return -ENOMEM;
 
-	/*
-	 * rq is expired!
-	 */
-	if (time_after_eq(jiffies, (unsigned long)rq->fifo_time))
-		return 1;
+        kqd = gamer_queue_data_alloc(q);
+        if (IS_ERR(kqd)) { kobject_put(&eq->kobj); return PTR_ERR(kqd); }
 
-	return 0;
+        eq->elevator_data = kqd;
+        q->elevator = eq;
+        blk_stat_add_callback(q, kqd->cb);
+        return 0;
 }
 
-/*
- * For the specified data direction, return the next request to
- * dispatch using arrival ordered lists.
- */
-static struct request *
-deadline_fifo_request(struct deadline_data *dd, int data_dir)
+static void gamer_exit_sched(struct elevator_queue *e)
 {
-	struct request *rq;
-	unsigned long flags;
+        struct gamer_queue_data *kqd = e->elevator_data;
+        struct request_queue *q = kqd->q;
+        int i;
+        blk_stat_remove_callback(q, kqd->cb);
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) sbitmap_queue_free(&kqd->domain_tokens[i]);
+        blk_stat_free_callback(kqd->cb);
+        kfree(kqd);
+}
 
-	if (WARN_ON_ONCE(data_dir != READ && data_dir != WRITE))
-		return NULL;
+static void gamer_ctx_queue_init(struct gamer_ctx_queue *kcq)
+{
+        unsigned int i;
+        spin_lock_init(&kcq->lock);
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) INIT_LIST_HEAD(&kcq->rq_list[i]);
+}
 
-	if (list_empty(&dd->fifo_list[data_dir]))
-		return NULL;
+static int gamer_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
+{
+        struct gamer_queue_data *kqd = hctx->queue->elevator->elevator_data;
+        struct gamer_hctx_data *khd;
+        int i;
 
-	rq = rq_entry_fifo(dd->fifo_list[data_dir].next);
-	if (data_dir == READ || !blk_queue_is_zoned(rq->q))
-		return rq;
+        khd = kmalloc_node(sizeof(*khd), GFP_KERNEL, hctx->numa_node);
+        if (!khd) return -ENOMEM;
 
-	/*
-	 * Look for a write request that can be dispatched, that is one with
-	 * an unlocked target zone.
-	 */
-	spin_lock_irqsave(&dd->zone_lock, flags);
-	list_for_each_entry(rq, &dd->fifo_list[WRITE], queuelist) {
-		if (blk_req_can_dispatch_to_zone(rq))
-			goto out;
-	}
-	rq = NULL;
+        khd->kcqs = kmalloc_array_node(hctx->nr_ctx, sizeof(struct gamer_ctx_queue), GFP_KERNEL, hctx->numa_node);
+        if (!khd->kcqs) { kfree(khd); return -ENOMEM; }
+
+        for (i = 0; i < hctx->nr_ctx; i++) gamer_ctx_queue_init(&khd->kcqs[i]);
+
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) {
+                if (sbitmap_init_node(&khd->kcq_map[i], hctx->nr_ctx, ilog2(8), GFP_KERNEL, hctx->numa_node)) {
+                        while (--i >= 0) sbitmap_free(&khd->kcq_map[i]);
+                        kfree(khd->kcqs); kfree(khd); return -ENOMEM;
+                }
+        }
+
+        spin_lock_init(&khd->lock);
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) {
+                INIT_LIST_HEAD(&khd->rqs[i]);
+                init_waitqueue_func_entry(&khd->domain_wait[i], gamer_domain_wake);
+                khd->domain_wait[i].private = hctx;
+                INIT_LIST_HEAD(&khd->domain_wait[i].entry);
+                atomic_set(&khd->wait_index[i], 0);
+        }
+
+        khd->cur_domain = 0;
+        khd->batching = 0;
+        hctx->sched_data = khd;
+        sbitmap_queue_min_shallow_depth(&hctx->sched_tags->bitmap_tags, kqd->async_depth);
+        return 0;
+}
+
+static void gamer_exit_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
+{
+        struct gamer_hctx_data *khd = hctx->sched_data;
+        int i;
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) sbitmap_free(&khd->kcq_map[i]);
+        kfree(khd->kcqs);
+        kfree(hctx->sched_data);
+}
+
+static int rq_get_domain_token(struct request *rq) { return (long)rq->elv.priv[0]; }
+static void rq_set_domain_token(struct request *rq, int token) { rq->elv.priv[0] = (void *)(long)token; }
+static void rq_clear_domain_token(struct gamer_queue_data *kqd, struct request *rq)
+{
+        int nr = rq_get_domain_token(rq);
+        if (nr != -1) {
+                unsigned int sched_domain = gamer_sched_domain(rq->cmd_flags);
+                sbitmap_queue_clear(&kqd->domain_tokens[sched_domain], nr, rq->mq_ctx->cpu);
+        }
+}
+
+static void gamer_limit_depth(unsigned int op, struct blk_mq_alloc_data *data)
+{
+        if (!op_is_sync(op)) {
+                struct gamer_queue_data *kqd = data->q->elevator->elevator_data;
+                data->shallow_depth = kqd->async_depth;
+        }
+}
+
+static bool gamer_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
+{
+        struct gamer_hctx_data *khd = hctx->sched_data;
+        struct blk_mq_ctx *ctx = blk_mq_get_ctx(hctx->queue);
+        struct gamer_ctx_queue *kcq = &khd->kcqs[ctx->index_hw];
+        unsigned int sched_domain = gamer_sched_domain(bio->bi_opf);
+        bool merged;
+
+        spin_lock(&kcq->lock);
+        merged = blk_mq_bio_list_merge(hctx->queue, &kcq->rq_list[sched_domain], bio);
+        spin_unlock(&kcq->lock);
+        blk_mq_put_ctx(ctx);
+        return merged;
+}
+
+static void gamer_prepare_request(struct request *rq, struct bio *bio) { rq_set_domain_token(rq, -1); }
+
+static void gamer_insert_requests(struct blk_mq_hw_ctx *hctx, struct list_head *rq_list, bool at_head)
+{
+        struct gamer_hctx_data *khd = hctx->sched_data;
+        struct request *rq, *next;
+
+        list_for_each_entry_safe(rq, next, rq_list, queuelist) {
+                unsigned int sched_domain = gamer_sched_domain(rq->cmd_flags);
+                struct gamer_ctx_queue *kcq = &khd->kcqs[rq->mq_ctx->index_hw];
+                struct list_head *head = &kcq->rq_list[sched_domain];
+
+                spin_lock(&kcq->lock);
+                if (at_head) list_move(&rq->queuelist, head);
+                else list_move_tail(&rq->queuelist, head);
+                sbitmap_set_bit(&khd->kcq_map[sched_domain], rq->mq_ctx->index_hw);
+                blk_mq_sched_request_inserted(rq);
+                spin_unlock(&kcq->lock);
+        }
+}
+
+static void gamer_finish_request(struct request *rq)
+{
+        struct gamer_queue_data *kqd = rq->q->elevator->elevator_data;
+        rq_clear_domain_token(kqd, rq);
+}
+
+static void gamer_completed_request(struct request *rq)
+{
+        struct request_queue *q = rq->q;
+        struct gamer_queue_data *kqd = q->elevator->elevator_data;
+        unsigned int sched_domain = gamer_sched_domain(rq->cmd_flags);
+        u64 now, latency, target;
+
+        switch (sched_domain) {
+        case GAMER_READ: target = kqd->read_lat_nsec; break;
+        case GAMER_SYNC_WRITE: target = kqd->write_lat_nsec; break;
+        default: return;
+        }
+
+        if (blk_stat_is_active(kqd->cb)) return;
+        now = ktime_get_ns();
+        if (now < rq->io_start_time_ns) return;
+        latency = now - rq->io_start_time_ns;
+
+        if (latency > target) blk_stat_activate_msecs(kqd->cb, 10);
+}
+
+struct gamer_flush_kcq_data {
+        struct gamer_hctx_data *khd;
+        unsigned int sched_domain;
+        struct list_head *list;
+};
+
+static bool flush_busy_kcq(struct sbitmap *sb, unsigned int bitnr, void *data)
+{
+        struct gamer_flush_kcq_data *flush_data = data;
+        struct gamer_ctx_queue *kcq = &flush_data->khd->kcqs[bitnr];
+
+        spin_lock(&kcq->lock);
+        list_splice_tail_init(&kcq->rq_list[flush_data->sched_domain], flush_data->list);
+        sbitmap_clear_bit(sb, bitnr);
+        spin_unlock(&kcq->lock);
+        return true;
+}
+
+static void gamer_flush_busy_kcqs(struct gamer_hctx_data *khd, unsigned int sched_domain, struct list_head *list)
+{
+        struct gamer_flush_kcq_data data = { .khd = khd, .sched_domain = sched_domain, .list = list };
+        sbitmap_for_each_set(&khd->kcq_map[sched_domain], flush_busy_kcq, &data);
+}
+
+static int gamer_domain_wake(wait_queue_entry_t *wait, unsigned mode, int flags, void *key)
+{
+        struct blk_mq_hw_ctx *hctx = READ_ONCE(wait->private);
+        list_del_init(&wait->entry);
+        blk_mq_run_hw_queue(hctx, true);
+        return 1;
+}
+
+static int gamer_get_domain_token(struct gamer_queue_data *kqd, struct gamer_hctx_data *khd, struct blk_mq_hw_ctx *hctx)
+{
+        unsigned int sched_domain = khd->cur_domain;
+        struct sbitmap_queue *domain_tokens = &kqd->domain_tokens[sched_domain];
+        wait_queue_entry_t *wait = &khd->domain_wait[sched_domain];
+        struct sbq_wait_state *ws;
+        int nr = __sbitmap_queue_get(domain_tokens);
+
+        if (nr < 0 && list_empty_careful(&wait->entry)) {
+                ws = sbq_wait_ptr(domain_tokens, &khd->wait_index[sched_domain]);
+                khd->domain_ws[sched_domain] = ws;
+                add_wait_queue(&ws->wait, wait);
+                nr = __sbitmap_queue_get(domain_tokens);
+        }
+
+        if (nr >= 0 && !list_empty_careful(&wait->entry)) {
+                ws = khd->domain_ws[sched_domain];
+                spin_lock_irq(&ws->wait.lock);
+                list_del_init(&wait->entry);
+                spin_unlock_irq(&ws->wait.lock);
+        }
+        return nr;
+}
+
+static struct request *gamer_dispatch_cur_domain(struct gamer_queue_data *kqd, struct gamer_hctx_data *khd, struct blk_mq_hw_ctx *hctx)
+{
+        struct list_head *rqs = &khd->rqs[khd->cur_domain];
+        struct request *rq;
+        int nr;
+
+        rq = list_first_entry_or_null(rqs, struct request, queuelist);
+        if (rq) {
+                nr = gamer_get_domain_token(kqd, khd, hctx);
+                if (nr >= 0) {
+                        khd->batching++;
+                        rq_set_domain_token(rq, nr);
+                        list_del_init(&rq->queuelist);
+                        return rq;
+                }
+        } else if (sbitmap_any_bit_set(&khd->kcq_map[khd->cur_domain])) {
+                nr = gamer_get_domain_token(kqd, khd, hctx);
+                if (nr >= 0) {
+                        gamer_flush_busy_kcqs(khd, khd->cur_domain, rqs);
+                        rq = list_first_entry(rqs, struct request, queuelist);
+                        khd->batching++;
+                        rq_set_domain_token(rq, nr);
+                        list_del_init(&rq->queuelist);
+                        return rq;
+                }
+        }
+        return NULL;
+}
+
+static struct request *gamer_dispatch_request(struct blk_mq_hw_ctx *hctx)
+{
+        struct gamer_queue_data *kqd = hctx->queue->elevator->elevator_data;
+        struct gamer_hctx_data *khd = hctx->sched_data;
+        struct request *rq;
+        int i;
+
+        spin_lock(&khd->lock);
+        if (khd->batching < gamer_batch_size[khd->cur_domain]) {
+                rq = gamer_dispatch_cur_domain(kqd, khd, hctx);
+                if (rq) goto out;
+        }
+
+        khd->batching = 0;
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) {
+                if (khd->cur_domain == GAMER_NUM_DOMAINS - 1) khd->cur_domain = 0;
+                else khd->cur_domain++;
+
+                rq = gamer_dispatch_cur_domain(kqd, khd, hctx);
+                if (rq) goto out;
+        }
+        rq = NULL;
 out:
-	spin_unlock_irqrestore(&dd->zone_lock, flags);
-
-	return rq;
+        spin_unlock(&khd->lock);
+        return rq;
 }
 
-/*
- * For the specified data direction, return the next request to
- * dispatch using sector position sorted lists.
- */
-static struct request *
-deadline_next_request(struct deadline_data *dd, int data_dir)
+static bool gamer_has_work(struct blk_mq_hw_ctx *hctx)
 {
-	struct request *rq;
-	unsigned long flags;
-
-	if (WARN_ON_ONCE(data_dir != READ && data_dir != WRITE))
-		return NULL;
-
-	rq = dd->next_rq[data_dir];
-	if (!rq)
-		return NULL;
-
-	if (data_dir == READ || !blk_queue_is_zoned(rq->q))
-		return rq;
-
-	/*
-	 * Look for a write request that can be dispatched, that is one with
-	 * an unlocked target zone.
-	 */
-	spin_lock_irqsave(&dd->zone_lock, flags);
-	while (rq) {
-		if (blk_req_can_dispatch_to_zone(rq))
-			break;
-		rq = deadline_latter_request(rq);
-	}
-	spin_unlock_irqrestore(&dd->zone_lock, flags);
-
-	return rq;
+        struct gamer_hctx_data *khd = hctx->sched_data;
+        int i;
+        for (i = 0; i < GAMER_NUM_DOMAINS; i++) {
+                if (!list_empty_careful(&khd->rqs[i]) || sbitmap_any_bit_set(&khd->kcq_map[i]))
+                        return true;
+        }
+        return false;
 }
 
-/*
- * deadline_dispatch_requests selects the best request according to
- * read/write expire, fifo_batch, etc
- */
-static struct request *__dd_dispatch_request(struct deadline_data *dd)
-{
-	struct request *rq, *next_rq;
-	bool reads, writes;
-	int data_dir;
-
-	if (!list_empty(&dd->dispatch)) {
-		rq = list_first_entry(&dd->dispatch, struct request, queuelist);
-		list_del_init(&rq->queuelist);
-		goto done;
-	}
-
-	reads = !list_empty(&dd->fifo_list[READ]);
-	writes = !list_empty(&dd->fifo_list[WRITE]);
-
-	/*
-	 * batches are currently reads XOR writes
-	 */
-	rq = deadline_next_request(dd, WRITE);
-	if (!rq)
-		rq = deadline_next_request(dd, READ);
-
-	if (rq && dd->batching < dd->fifo_batch)
-		/* we have a next request are still entitled to batch */
-		goto dispatch_request;
-
-	/*
-	 * at this point we are not running a batch. select the appropriate
-	 * data direction (read / write)
-	 */
-
-	if (reads) {
-		BUG_ON(RB_EMPTY_ROOT(&dd->sort_list[READ]));
-
-		if (deadline_fifo_request(dd, WRITE) &&
-		    (dd->starved++ >= dd->writes_starved))
-			goto dispatch_writes;
-
-		data_dir = READ;
-
-		goto dispatch_find_request;
-	}
-
-	/*
-	 * there are either no reads or writes have been starved
-	 */
-
-	if (writes) {
-dispatch_writes:
-		BUG_ON(RB_EMPTY_ROOT(&dd->sort_list[WRITE]));
-
-		dd->starved = 0;
-
-		data_dir = WRITE;
-
-		goto dispatch_find_request;
-	}
-
-	return NULL;
-
-dispatch_find_request:
-	/*
-	 * we are not running a batch, find best request for selected data_dir
-	 */
-	next_rq = deadline_next_request(dd, data_dir);
-	if (deadline_check_fifo(dd, data_dir) || !next_rq) {
-		/*
-		 * A deadline has expired, the last request was in the other
-		 * direction, or we have run out of higher-sectored requests.
-		 * Start again from the request with the earliest expiry time.
-		 */
-		rq = deadline_fifo_request(dd, data_dir);
-	} else {
-		/*
-		 * The last req was the same dir and we have a next request in
-		 * sort order. No expired requests so continue on from here.
-		 */
-		rq = next_rq;
-	}
-
-	/*
-	 * For a zoned block device, if we only have writes queued and none of
-	 * them can be dispatched, rq will be NULL.
-	 */
-	if (!rq)
-		return NULL;
-
-	dd->batching = 0;
-
-dispatch_request:
-	/*
-	 * rq is the selected appropriate request.
-	 */
-	dd->batching++;
-	deadline_move_request(dd, rq);
-done:
-	/*
-	 * If the request needs its target zone locked, do it.
-	 */
-	blk_req_zone_write_lock(rq);
-	rq->rq_flags |= RQF_STARTED;
-	return rq;
+#define GAMER_LAT_SHOW_STORE(op) \
+static ssize_t gamer_##op##_lat_show(struct elevator_queue *e, char *page) \
+{ \
+        struct gamer_queue_data *kqd = e->elevator_data; \
+        return sprintf(page, "%llu\n", kqd->op##_lat_nsec); \
+} \
+static ssize_t gamer_##op##_lat_store(struct elevator_queue *e, const char *page, size_t count) \
+{ \
+        struct gamer_queue_data *kqd = e->elevator_data; \
+        unsigned long long nsec; \
+        int ret = kstrtoull(page, 10, &nsec); \
+        if (ret) return ret; \
+        kqd->op##_lat_nsec = nsec; \
+        return count; \
 }
+GAMER_LAT_SHOW_STORE(read);
+GAMER_LAT_SHOW_STORE(write);
 
-/*
- * One confusing aspect here is that we get called for a specific
- * hardware queue, but we may return a request that is for a
- * different hardware queue. This is because mq-deadline has shared
- * state for all hardware queues, in terms of sorting, FIFOs, etc.
- */
-static struct request *dd_dispatch_request(struct blk_mq_hw_ctx *hctx)
-{
-	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
-	struct request *rq;
-
-	spin_lock(&dd->lock);
-	rq = __dd_dispatch_request(dd);
-	spin_unlock(&dd->lock);
-
-	return rq;
-}
-
-static void dd_exit_queue(struct elevator_queue *e)
-{
-	struct deadline_data *dd = e->elevator_data;
-
-	BUG_ON(!list_empty(&dd->fifo_list[READ]));
-	BUG_ON(!list_empty(&dd->fifo_list[WRITE]));
-
-	kfree(dd);
-}
-
-/*
- * initialize elevator private data (deadline_data).
- */
-static int dd_init_queue(struct request_queue *q, struct elevator_type *e)
-{
-	struct deadline_data *dd;
-	struct elevator_queue *eq;
-
-	eq = elevator_alloc(q, e);
-	if (!eq)
-		return -ENOMEM;
-
-	dd = kzalloc_node(sizeof(*dd), GFP_KERNEL, q->node);
-	if (!dd) {
-		kobject_put(&eq->kobj);
-		return -ENOMEM;
-	}
-	eq->elevator_data = dd;
-
-	INIT_LIST_HEAD(&dd->fifo_list[READ]);
-	INIT_LIST_HEAD(&dd->fifo_list[WRITE]);
-	dd->sort_list[READ] = RB_ROOT;
-	dd->sort_list[WRITE] = RB_ROOT;
-	dd->fifo_expire[READ] = read_expire;
-	dd->fifo_expire[WRITE] = write_expire;
-	dd->writes_starved = writes_starved;
-	dd->front_merges = 1;
-	dd->fifo_batch = fifo_batch;
-	spin_lock_init(&dd->lock);
-	spin_lock_init(&dd->zone_lock);
-	INIT_LIST_HEAD(&dd->dispatch);
-
-	q->elevator = eq;
-	return 0;
-}
-
-static int dd_request_merge(struct request_queue *q, struct request **rq,
-			    struct bio *bio)
-{
-	struct deadline_data *dd = q->elevator->elevator_data;
-	sector_t sector = bio_end_sector(bio);
-	struct request *__rq;
-
-	if (!dd->front_merges)
-		return ELEVATOR_NO_MERGE;
-
-	__rq = elv_rb_find(&dd->sort_list[bio_data_dir(bio)], sector);
-	if (__rq) {
-		BUG_ON(sector != blk_rq_pos(__rq));
-
-		if (elv_bio_merge_ok(__rq, bio)) {
-			*rq = __rq;
-			return ELEVATOR_FRONT_MERGE;
-		}
-	}
-
-	return ELEVATOR_NO_MERGE;
-}
-
-static bool dd_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
-{
-	struct request_queue *q = hctx->queue;
-	struct deadline_data *dd = q->elevator->elevator_data;
-	struct request *free = NULL;
-	bool ret;
-
-	spin_lock(&dd->lock);
-	ret = blk_mq_sched_try_merge(q, bio, &free);
-	spin_unlock(&dd->lock);
-
-	if (free)
-		blk_mq_free_request(free);
-
-	return ret;
-}
-
-/*
- * add rq to rbtree and fifo
- */
-static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
-			      bool at_head)
-{
-	struct request_queue *q = hctx->queue;
-	struct deadline_data *dd = q->elevator->elevator_data;
-	const int data_dir = rq_data_dir(rq);
-
-	/*
-	 * This may be a requeue of a write request that has locked its
-	 * target zone. If it is the case, this releases the zone lock.
-	 */
-	blk_req_zone_write_unlock(rq);
-
-	if (blk_mq_sched_try_insert_merge(q, rq))
-		return;
-
-	blk_mq_sched_request_inserted(rq);
-
-	if (at_head || blk_rq_is_passthrough(rq)) {
-		if (at_head)
-			list_add(&rq->queuelist, &dd->dispatch);
-		else
-			list_add_tail(&rq->queuelist, &dd->dispatch);
-	} else {
-		deadline_add_rq_rb(dd, rq);
-
-		if (rq_mergeable(rq)) {
-			elv_rqhash_add(q, rq);
-			if (!q->last_merge)
-				q->last_merge = rq;
-		}
-
-		/*
-		 * set expire time and add to fifo list
-		 */
-		rq->fifo_time = jiffies + dd->fifo_expire[data_dir];
-		list_add_tail(&rq->queuelist, &dd->fifo_list[data_dir]);
-	}
-}
-
-static void dd_insert_requests(struct blk_mq_hw_ctx *hctx,
-			       struct list_head *list, bool at_head)
-{
-	struct request_queue *q = hctx->queue;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	spin_lock(&dd->lock);
-	while (!list_empty(list)) {
-		struct request *rq;
-
-		rq = list_first_entry(list, struct request, queuelist);
-		list_del_init(&rq->queuelist);
-		dd_insert_request(hctx, rq, at_head);
-	}
-	spin_unlock(&dd->lock);
-}
-
-/*
- * Nothing to do here. This is defined only to ensure that .finish_request
- * method is called upon request completion.
- */
-static void dd_prepare_request(struct request *rq, struct bio *bio)
-{
-}
-
-/*
- * For zoned block devices, write unlock the target zone of
- * completed write requests. Do this while holding the zone lock
- * spinlock so that the zone is never unlocked while deadline_fifo_request()
- * or deadline_next_request() are executing. This function is called for
- * all requests, whether or not these requests complete successfully.
- *
- * For a zoned block device, __dd_dispatch_request() may have stopped
- * dispatching requests if all the queued requests are write requests directed
- * at zones that are already locked due to on-going write requests. To ensure
- * write request dispatch progress in this case, mark the queue as needing a
- * restart to ensure that the queue is run again after completion of the
- * request and zones being unlocked.
- */
-static void dd_finish_request(struct request *rq)
-{
-	struct request_queue *q = rq->q;
-
-	if (blk_queue_is_zoned(q)) {
-		struct deadline_data *dd = q->elevator->elevator_data;
-		unsigned long flags;
-
-		spin_lock_irqsave(&dd->zone_lock, flags);
-		blk_req_zone_write_unlock(rq);
-		if (!list_empty(&dd->fifo_list[WRITE])) {
-			struct blk_mq_hw_ctx *hctx;
-
-			hctx = blk_mq_map_queue(q, rq->mq_ctx->cpu);
-			blk_mq_sched_mark_restart_hctx(hctx);
-		}
-		spin_unlock_irqrestore(&dd->zone_lock, flags);
-	}
-}
-
-static bool dd_has_work(struct blk_mq_hw_ctx *hctx)
-{
-	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
-
-	return !list_empty_careful(&dd->dispatch) ||
-		!list_empty_careful(&dd->fifo_list[0]) ||
-		!list_empty_careful(&dd->fifo_list[1]);
-}
-
-/*
- * sysfs parts below
- */
-static ssize_t
-deadline_var_show(int var, char *page)
-{
-	return sprintf(page, "%d\n", var);
-}
-
-static void
-deadline_var_store(int *var, const char *page)
-{
-	char *p = (char *) page;
-
-	*var = simple_strtol(p, &p, 10);
-}
-
-#define SHOW_FUNCTION(__FUNC, __VAR, __CONV)				\
-static ssize_t __FUNC(struct elevator_queue *e, char *page)		\
-{									\
-	struct deadline_data *dd = e->elevator_data;			\
-	int __data = __VAR;						\
-	if (__CONV)							\
-		__data = jiffies_to_msecs(__data);			\
-	return deadline_var_show(__data, (page));			\
-}
-SHOW_FUNCTION(deadline_read_expire_show, dd->fifo_expire[READ], 1);
-SHOW_FUNCTION(deadline_write_expire_show, dd->fifo_expire[WRITE], 1);
-SHOW_FUNCTION(deadline_writes_starved_show, dd->writes_starved, 0);
-SHOW_FUNCTION(deadline_front_merges_show, dd->front_merges, 0);
-SHOW_FUNCTION(deadline_fifo_batch_show, dd->fifo_batch, 0);
-#undef SHOW_FUNCTION
-
-#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
-static ssize_t __FUNC(struct elevator_queue *e, const char *page, size_t count)	\
-{									\
-	struct deadline_data *dd = e->elevator_data;			\
-	int __data;							\
-	deadline_var_store(&__data, (page));				\
-	if (__data < (MIN))						\
-		__data = (MIN);						\
-	else if (__data > (MAX))					\
-		__data = (MAX);						\
-	if (__CONV)							\
-		*(__PTR) = msecs_to_jiffies(__data);			\
-	else								\
-		*(__PTR) = __data;					\
-	return count;							\
-}
-STORE_FUNCTION(deadline_read_expire_store, &dd->fifo_expire[READ], 0, INT_MAX, 1);
-STORE_FUNCTION(deadline_write_expire_store, &dd->fifo_expire[WRITE], 0, INT_MAX, 1);
-STORE_FUNCTION(deadline_writes_starved_store, &dd->writes_starved, INT_MIN, INT_MAX, 0);
-STORE_FUNCTION(deadline_front_merges_store, &dd->front_merges, 0, 1, 0);
-STORE_FUNCTION(deadline_fifo_batch_store, &dd->fifo_batch, 0, INT_MAX, 0);
-#undef STORE_FUNCTION
-
-#define DD_ATTR(name) \
-	__ATTR(name, 0644, deadline_##name##_show, deadline_##name##_store)
-
-static struct elv_fs_entry deadline_attrs[] = {
-	DD_ATTR(read_expire),
-	DD_ATTR(write_expire),
-	DD_ATTR(writes_starved),
-	DD_ATTR(front_merges),
-	DD_ATTR(fifo_batch),
-	__ATTR_NULL
+#define GAMER_LAT_ATTR(op) __ATTR(op##_lat_nsec, 0644, gamer_##op##_lat_show, gamer_##op##_lat_store)
+static struct elv_fs_entry gamer_sched_attrs[] = {
+        GAMER_LAT_ATTR(read),
+        GAMER_LAT_ATTR(write),
+        __ATTR_NULL
 };
 
-#ifdef CONFIG_BLK_DEBUG_FS
-#define DEADLINE_DEBUGFS_DDIR_ATTRS(ddir, name)				\
-static void *deadline_##name##_fifo_start(struct seq_file *m,		\
-					  loff_t *pos)			\
-	__acquires(&dd->lock)						\
-{									\
-	struct request_queue *q = m->private;				\
-	struct deadline_data *dd = q->elevator->elevator_data;		\
-									\
-	spin_lock(&dd->lock);						\
-	return seq_list_start(&dd->fifo_list[ddir], *pos);		\
-}									\
-									\
-static void *deadline_##name##_fifo_next(struct seq_file *m, void *v,	\
-					 loff_t *pos)			\
-{									\
-	struct request_queue *q = m->private;				\
-	struct deadline_data *dd = q->elevator->elevator_data;		\
-									\
-	return seq_list_next(v, &dd->fifo_list[ddir], pos);		\
-}									\
-									\
-static void deadline_##name##_fifo_stop(struct seq_file *m, void *v)	\
-	__releases(&dd->lock)						\
-{									\
-	struct request_queue *q = m->private;				\
-	struct deadline_data *dd = q->elevator->elevator_data;		\
-									\
-	spin_unlock(&dd->lock);						\
-}									\
-									\
-static const struct seq_operations deadline_##name##_fifo_seq_ops = {	\
-	.start	= deadline_##name##_fifo_start,				\
-	.next	= deadline_##name##_fifo_next,				\
-	.stop	= deadline_##name##_fifo_stop,				\
-	.show	= blk_mq_debugfs_rq_show,				\
-};									\
-									\
-static int deadline_##name##_next_rq_show(void *data,			\
-					  struct seq_file *m)		\
-{									\
-	struct request_queue *q = data;					\
-	struct deadline_data *dd = q->elevator->elevator_data;		\
-	struct request *rq = dd->next_rq[ddir];				\
-									\
-	if (rq)								\
-		__blk_mq_debugfs_rq_show(m, rq);			\
-	return 0;							\
-}
-DEADLINE_DEBUGFS_DDIR_ATTRS(READ, read)
-DEADLINE_DEBUGFS_DDIR_ATTRS(WRITE, write)
-#undef DEADLINE_DEBUGFS_DDIR_ATTRS
-
-static int deadline_batching_show(void *data, struct seq_file *m)
-{
-	struct request_queue *q = data;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	seq_printf(m, "%u\n", dd->batching);
-	return 0;
-}
-
-static int deadline_starved_show(void *data, struct seq_file *m)
-{
-	struct request_queue *q = data;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	seq_printf(m, "%u\n", dd->starved);
-	return 0;
-}
-
-static void *deadline_dispatch_start(struct seq_file *m, loff_t *pos)
-	__acquires(&dd->lock)
-{
-	struct request_queue *q = m->private;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	spin_lock(&dd->lock);
-	return seq_list_start(&dd->dispatch, *pos);
-}
-
-static void *deadline_dispatch_next(struct seq_file *m, void *v, loff_t *pos)
-{
-	struct request_queue *q = m->private;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	return seq_list_next(v, &dd->dispatch, pos);
-}
-
-static void deadline_dispatch_stop(struct seq_file *m, void *v)
-	__releases(&dd->lock)
-{
-	struct request_queue *q = m->private;
-	struct deadline_data *dd = q->elevator->elevator_data;
-
-	spin_unlock(&dd->lock);
-}
-
-static const struct seq_operations deadline_dispatch_seq_ops = {
-	.start	= deadline_dispatch_start,
-	.next	= deadline_dispatch_next,
-	.stop	= deadline_dispatch_stop,
-	.show	= blk_mq_debugfs_rq_show,
-};
-
-#define DEADLINE_QUEUE_DDIR_ATTRS(name)						\
-	{#name "_fifo_list", 0400, .seq_ops = &deadline_##name##_fifo_seq_ops},	\
-	{#name "_next_rq", 0400, deadline_##name##_next_rq_show}
-static const struct blk_mq_debugfs_attr deadline_queue_debugfs_attrs[] = {
-	DEADLINE_QUEUE_DDIR_ATTRS(read),
-	DEADLINE_QUEUE_DDIR_ATTRS(write),
-	{"batching", 0400, deadline_batching_show},
-	{"starved", 0400, deadline_starved_show},
-	{"dispatch", 0400, .seq_ops = &deadline_dispatch_seq_ops},
-	{},
-};
-#undef DEADLINE_QUEUE_DDIR_ATTRS
-#endif
-
+/* 
+ * PENYESUAIAN REGISTRASI SCHEDULER
+ * Ini adalah bagian yang menimpa identitas `gamer` menjadi `mq-deadline`.
+ * Struktur operasi dipetakan ke fungsi internal `gamer_` milik kita.
+ */
 static struct elevator_type mq_deadline = {
-	.ops.mq = {
-		.insert_requests	= dd_insert_requests,
-		.dispatch_request	= dd_dispatch_request,
-		.prepare_request	= dd_prepare_request,
-		.finish_request		= dd_finish_request,
-		.next_request		= elv_rb_latter_request,
-		.former_request		= elv_rb_former_request,
-		.bio_merge		= dd_bio_merge,
-		.request_merge		= dd_request_merge,
-		.requests_merged	= dd_merged_requests,
-		.request_merged		= dd_request_merged,
-		.has_work		= dd_has_work,
-		.init_sched		= dd_init_queue,
-		.exit_sched		= dd_exit_queue,
-	},
-
-	.uses_mq	= true,
-#ifdef CONFIG_BLK_DEBUG_FS
-	.queue_debugfs_attrs = deadline_queue_debugfs_attrs,
-#endif
-	.elevator_attrs = deadline_attrs,
-	.elevator_name = "mq-deadline",
-	.elevator_alias = "deadline",
-	.elevator_owner = THIS_MODULE,
+        .ops.mq = {
+                .init_sched         = gamer_init_sched,
+                .exit_sched         = gamer_exit_sched,
+                .init_hctx          = gamer_init_hctx,
+                .exit_hctx          = gamer_exit_hctx,
+                .limit_depth        = gamer_limit_depth,
+                .bio_merge          = gamer_bio_merge,
+                .prepare_request    = gamer_prepare_request,
+                .insert_requests    = gamer_insert_requests,
+                .finish_request     = gamer_finish_request,
+                .requeue_request    = gamer_finish_request,
+                .completed_request  = gamer_completed_request,
+                .dispatch_request   = gamer_dispatch_request,
+                .has_work           = gamer_has_work,
+        },
+        .uses_mq = true,
+        .elevator_attrs = gamer_sched_attrs,
+        .elevator_name = "mq-deadline",
+        .elevator_alias = "deadline",
+        .elevator_owner = THIS_MODULE,
 };
+
 MODULE_ALIAS("mq-deadline-iosched");
 
 static int __init deadline_init(void)
 {
-	return elv_register(&mq_deadline);
+        return elv_register(&mq_deadline);
 }
 
 static void __exit deadline_exit(void)
 {
-	elv_unregister(&mq_deadline);
+        elv_unregister(&mq_deadline);
 }
 
 module_init(deadline_init);
 module_exit(deadline_exit);
 
-MODULE_AUTHOR("Jens Axboe");
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("MQ deadline IO scheduler");
+MODULE_AUTHOR("Gamer IO Custom");
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("MQ deadline IO scheduler (Overridden by Gamer IO)");
