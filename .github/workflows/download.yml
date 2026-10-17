@@ -1,79 +1,107 @@
-name: Export Custom Files to Artifact
+name: Transfer Custom Files Between Branches
 
 on:
   workflow_dispatch:
     inputs:
+      source_branch:
+        description: 'Branch Sumber (Tempat file custom berada)'
+        required: true
+        type: string
+        default: 'diantk'
       target_branch:
-        description: 'Branch Target (Contoh: diantk2, master, spoof)'
+        description: 'Branch Tujuan (Tempat file akan dimasukkan)'
         required: true
         type: string
         default: 'diantk2'
-      artifact_name:
-        description: 'Nama File Artefak ZIP'
+      file_list:
+        description: 'Daftar File (Paste di sini. Pisahkan dengan Spasi atau Enter)'
         required: true
         type: string
-        default: 'Kernel_Extreme_Source'
+        default: 'crypto/wkdm_lz4hc.c block/mq_gamer.c'
+      commit_message:
+        description: 'Pesan Commit'
+        required: true
+        type: string
+        default: 'Sync custom files from source branch'
 
 jobs:
-  export-files:
+  transfer-files:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - name: 📥 Checkout Repository
+      - name: 📥 Checkout Target Branch
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          fetch-depth: 1
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || github.token }}
 
-      - name: 📂 Persiapkan Direktori dan Salin File
+      - name: ⚙️ Konfigurasi Git User
         run: |
-          echo "Membuat direktori penampung..."
-          mkdir -p export_dir
-          
-          # Daftar file dan direktori custom yang akan disalin
-          FILES=(
-            "crypto/wkdm_lz4hc.c"
-            "crypto/wkdm_lz4hc_main.c"
-            "crypto/wkdm_lz4hc_arm64.S"
-            "crypto/lz4hc.c"
-            "block/Kconfig.iosched"
-            "block/mq_gamer.c"
-            "drivers/block/zram/zram_drv.c"
-            "mm/vmpressure.c"
-            "mm/vmscan.c"
-            "mm/page_alloc.c"
-            "mm/oom_kill.c"
-            "arch/arm64/configs/bumi_defconfig"
-            "arch/arm64/configs/bumi2_defconfig"
-            "arch/arm64/configs/bumi_ksu_defconfig"
-            "arch/arm64/configs/earth_defconfig"
-            "drivers/power/supply/mediatek/mtk_charger.c"
-            "drivers/power/supply/mediatek/mtk_battery_core.c"
-            "drivers/power/supply/mediatek/sgm4151x.c"
-            "drivers/power/supply/mediatek/eta696x_charger.c"
-            "drivers/cpufreq/cpufreq_schedutil.c"
-            "drivers/cpufreq/cpufreq_schedutil_plus.c"
-            "drivers/gpu/mediatek/mtk_gpufreq_core.c"
-            "drivers/gpu/mediatek/mtk_picachu.c"
-            "arch/arm64/boot/dts/mediatek/mt6768.dts"
-            "net/ipv4/tcp_input.c"
-          )
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git config --global --add safe.directory '*'
 
-          # Eksekusi penyalinan sambil mempertahankan struktur folder
+      - name: 🔄 Tarik File dari Branch Sumber & Pertahankan Folder
+        env:
+          # Mengambil input daftar file dari UI GitHub
+          FILE_LIST_INPUT: ${{ inputs.file_list }}
+        run: |
+          SOURCE_BRANCH="${{ inputs.source_branch }}"
+          TARGET_BRANCH="${{ inputs.target_branch }}"
+
+          echo "Mengambil data dari origin/$SOURCE_BRANCH..."
+          # Fetch branch sumber agar Git mengenali isinya
+          git fetch origin "$SOURCE_BRANCH"
+
+          # Membaca daftar file dari input (Mendukung spasi dan baris baru/Enter)
+          # Ini juga akan mengabaikan baris kosong jika Anda tidak sengaja menekan enter berlebih
+          mapfile -t FILES < <(echo "$FILE_LIST_INPUT" | tr ' ' '\n' | grep -v '^$')
+
+          echo "========================================"
+          echo "Memulai Transfer ${#FILES[@]} File..."
+          echo "========================================"
+
+          SUCCESS_COUNT=0
+          FAIL_COUNT=0
+
           for file in "${FILES[@]}"; do
-            if [ -f "$file" ]; then
-              # Buat struktur foldernya di dalam export_dir
-              mkdir -p "export_dir/$(dirname "$file")"
-              # Salin filenya
-              cp "$file" "export_dir/$file"
-              echo "✅ Ditemukan & disalin: $file"
+            # Bersihkan karakter carriage return (\r) jika Anda copas dari Windows Notepad
+            file=$(echo "$file" | tr -d '\r')
+            
+            # Jika baris kosong, lewati
+            if [ -z "$file" ]; then continue; fi
+
+            # Cek apakah file tersebut benar-benar ada di branch sumber
+            if git ls-tree -r "origin/$SOURCE_BRANCH" --name-only | grep -q "^$file$"; then
+              # Tarik file beserta struktur foldernya
+              git checkout "origin/$SOURCE_BRANCH" -- "$file"
+              echo "✅ Berhasil ditarik: $file"
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
-              echo "⚠️ PERINGATAN: File tidak ditemukan di branch ini: $file"
+              echo "⚠️ Lewati (Tidak ada di $SOURCE_BRANCH): $file"
+              FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
           done
 
-      - name: 📦 Kompres dan Upload ke Artifact (ZIP)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_name }}
-          path: export_dir/
-          retention-days: 7
+          echo "========================================"
+          echo "📊 Ringkasan: $SUCCESS_COUNT berhasil, $FAIL_COUNT dilewati."
+          echo "========================================"
+
+      - name: 🚀 Commit dan Push ke Target Branch
+        run: |
+          TARGET_BRANCH="${{ inputs.target_branch }}"
+          COMMIT_MSG="${{ inputs.commit_message }}"
+
+          # Cek apakah ada perubahan (file baru ditarik atau ada modifikasi)
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Mendeteksi perubahan, menyiapkan commit..."
+            git add .
+            git commit -m "$COMMIT_MSG"
+            git push origin "$TARGET_BRANCH"
+            echo "✅ Selesai! Semua file berhasil dimasukkan ke branch $TARGET_BRANCH."
+          else
+            echo "ℹ️ Tidak ada perubahan. File di branch $TARGET_BRANCH sudah sama persis dengan $SOURCE_BRANCH."
+          fi
