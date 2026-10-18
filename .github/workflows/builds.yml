@@ -3,7 +3,7 @@ name: Build Kernel new
 on:
   push:
     branches:
-      - '**'
+      - 'new2'
   workflow_dispatch:
     inputs:
       variants:
