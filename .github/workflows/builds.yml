@@ -1,9 +1,6 @@
-Name: Build Kernel Custom (Integrated Script)
+name: Build Kernel Custom (Manual Run)
 
 on:
-  push:
-    branches:
-      - '**'
   workflow_dispatch:
     inputs:
       target_branch:
@@ -35,7 +32,7 @@ jobs:
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch || github.ref_name }}
+          ref: ${{ github.event.inputs.target_branch }}
           submodules: false
           fetch-depth: 0
           
@@ -71,8 +68,8 @@ jobs:
       - name: Build and Package Kernel
         env:
           KERNEL_VERSION: ${{ steps.version.outputs.version }}
-          DEFCONFIG: ${{ github.event.inputs.custom_defconfig || 'bumi_defconfig' }}
-          VARIANTS_INPUT: ${{ github.event.inputs.variants || 'ksu-next+susfs' }}
+          DEFCONFIG: ${{ github.event.inputs.custom_defconfig }}
+          VARIANTS_INPUT: ${{ github.event.inputs.variants }}
         run: |
           set -euo pipefail
 
@@ -302,7 +299,6 @@ if "ksu_try_umount" not in content:
     name: Publish Release
     needs: build
     runs-on: ubuntu-latest
-    if: (github.ref == format('refs/heads/{0}', github.event.inputs.target_branch)) || (github.ref == 'refs/heads/diantk2' && github.event_name == 'push')
     permissions:
       contents: write
 
@@ -310,7 +306,7 @@ if "ksu_try_umount" not in content:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch || github.ref_name }}
+          ref: ${{ github.event.inputs.target_branch }}
           fetch-depth: 0
 
       - name: Compute version string
@@ -332,7 +328,7 @@ if "ksu_try_umount" not in content:
         id: notes
         run: |
           KERNEL_VER="$(head -3 Makefile | grep -E 'VERSION|PATCHLEVEL|SUBLEVEL' | awk '{print $3}' \vert{} tr '\n' '.' \vert{} sed 's/\.$//')"
-          DEFCONFIG_USED="${{ github.event.inputs.custom_defconfig || 'bumi_defconfig' }}"
+          DEFCONFIG_USED="${{ github.event.inputs.custom_defconfig }}"
 
           cat > /tmp/release_notes.md << EOF
           ## 🐉 Custom Earth Kernel — ${{ steps.version.outputs.version }}
