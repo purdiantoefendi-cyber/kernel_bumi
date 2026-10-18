@@ -27,18 +27,23 @@ on:
         required: true
         type: string
         default: 'diantk2'
+      fetch_count:
+        description: '[MODE UTAMA] Ambil X commit terakhir (Contoh: 10, 50. Kosongkan jika pakai Hash/Tanggal)'
+        required: false
+        type: string
+        default: '10'
       commit_hashes:
-        description: '[MODE 1] Daftar Hash Commit (Kosongkan jika pakai mode tanggal)'
+        description: '[MODE 2] Daftar Hash Commit (Kosongkan jika pakai Jumlah/Tanggal)'
         required: false
         type: string
         default: ''
       fetch_since:
-        description: '[MODE 2] Mulai dari tanggal (Format: YYYY-MM-DD, contoh: 2026-01-01)'
+        description: '[MODE 3] Mulai dari tanggal (Format: YYYY-MM-DD)'
         required: false
         type: string
         default: ''
       fetch_until:
-        description: '[MODE 2] Sampai tanggal (Opsional. Format: YYYY-MM-DD, contoh: 2026-01-31)'
+        description: '[MODE 3] Sampai tanggal (Opsional)'
         required: false
         type: string
         default: ''
@@ -73,74 +78,73 @@ jobs:
           EXTERNAL_BRANCH="${{ inputs.external_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
           COMMITS_INPUT="${{ inputs.commit_hashes }}"
+          FETCH_COUNT="${{ inputs.fetch_count }}"
           FETCH_SINCE="${{ inputs.fetch_since }}"
           FETCH_UNTIL="${{ inputs.fetch_until }}"
           RETRO_DAYS="${{ inputs.retro_days }}"
 
-          # 1. Validasi Input Eksklusif
-          if [ -z "$COMMITS_INPUT" ] && [ -z "$FETCH_SINCE" ]; then
-            echo "❌ ERROR: Anda harus mengisi salah satu: 'Daftar Hash' ATAU 'Mulai dari tanggal'."
+          if [ -z "$COMMITS_INPUT" ] && [ -z "$FETCH_SINCE" ] && [ -z "$FETCH_COUNT" ]; then
+            echo "❌ ERROR: Isi salah satu: Jumlah, Hash, atau Tanggal."
             exit 1
           fi
 
           echo "Mempersiapkan repository eksternal..."
           git remote remove custom_repo 2>/dev/null || true
           git remote add custom_repo "$EXTERNAL_REPO"
-          
-          # Gunakan fetch spesifik ke branch target agar masuk ke FETCH_HEAD
           git fetch custom_repo "$EXTERNAL_BRANCH"
           git fetch origin
 
-          # 2. Pindah ke branch target
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
           else
             git checkout -b "$TARGET_BRANCH"
           fi
 
-          # 3. LOGIKA PEMILIHAN COMMIT (Tanggal vs Hash)
-          if [ -n "$COMMITS_INPUT" ]; then
+          # LOGIKA PEMILIHAN COMMIT
+          if [ -n "$FETCH_COUNT" ] && [ "$FETCH_COUNT" -gt 0 ]; then
+            echo "========================================"
+            echo "🔍 MENGGUNAKAN MODE JUMLAH (Mengambil $FETCH_COUNT commit terakhir)"
+            echo "========================================"
+            # Menggunakan -n untuk mengambil X commit paling atas, lalu --reverse agar urutannya benar saat dicommit
+            COMMIT_LIST=$(git log -n "$FETCH_COUNT" --reverse --format="%H" FETCH_HEAD)
+            read -r -a COMMITS <<< "$COMMIT_LIST"
+            
+          elif [ -n "$COMMITS_INPUT" ]; then
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE HASH"
             echo "========================================"
             read -r -a COMMITS <<< "$COMMITS_INPUT"
-          else
+            
+          elif [ -n "$FETCH_SINCE" ]; then
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE TANGGAL"
             if [ -n "$FETCH_UNTIL" ]; then
-              # PERBAIKAN 1: Memaksa Git membaca hingga akhir hari (23:59:59)
-              echo "Rentang: $FETCH_SINCE sampai $FETCH_UNTIL (Pukul 23:59:59)"
               GIT_UNTIL_ARG="--until=${FETCH_UNTIL}T23:59:59"
             else
-              echo "Rentang: Sejak $FETCH_SINCE sampai sekarang"
               GIT_UNTIL_ARG=""
             fi
             echo "========================================"
-            
-            # PERBAIKAN 2: Menggunakan FETCH_HEAD agar data mentah langsung terbaca
             COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --reverse --format="%H" FETCH_HEAD)
             read -r -a COMMITS <<< "$COMMIT_LIST"
-            
-            if [ ${#COMMITS[@]} -eq 0 ] || [ -z "$COMMIT_LIST" ]; then
-              echo "❌ Tidak ada commit yang ditemukan pada rentang tanggal tersebut."
-              exit 0
-            fi
-            echo "Ditemukan ${#COMMITS[@]} commit yang akan ditarik secara otomatis."
           fi
+
+          if [ ${#COMMITS[@]} -eq 0 ] || [ -z "${COMMITS[0]}" ]; then
+            echo "❌ Tidak ada commit yang ditemukan. Coba gunakan Mode Jumlah (fetch_count)."
+            exit 0
+          fi
+          
+          echo "✅ Ditemukan ${#COMMITS[@]} commit siap di-cherry-pick."
 
           SUCCESS_COMMITS=()
           FAILED_COMMITS=()
           TIME_OFFSET=0
 
-          # 4. Loop Eksekusi Cherry-Pick
           for commit in "${COMMITS[@]}"; do
             if [ -n "$commit" ]; then
               echo "----------------------------------------"
               echo "Menerapkan commit: $commit"
               
               if git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"; then
-                
-                # Logika Spoofing Waktu Mundur
                 if [ -n "$RETRO_DAYS" ] && [ "$RETRO_DAYS" -gt 0 ]; then
                   PAST_DATE=$(date -d "$RETRO_DAYS days ago + $TIME_OFFSET minutes" --iso-8601=seconds)
                   GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
@@ -148,7 +152,6 @@ jobs:
                 else
                   echo "✅ BERHASIL (Tanggal asli dipertahankan)"
                 fi
-                
                 SUCCESS_COMMITS+=("$commit")
                 TIME_OFFSET=$((TIME_OFFSET + 1))
               else
@@ -159,13 +162,11 @@ jobs:
             fi
           done
 
-          # 5. Laporan Eksekusi
           echo "========================================"
           echo "📊 LAPORAN HASIL CHERRY-PICK"
           echo "✅ Berhasil: ${#SUCCESS_COMMITS[@]}"
           echo "❌ Gagal: ${#FAILED_COMMITS[@]}"
           echo "========================================"
 
-          # 6. Push ke repositori
           echo "Mendorong perubahan ke origin/$TARGET_BRANCH..."
           git push origin "$TARGET_BRANCH" --force
