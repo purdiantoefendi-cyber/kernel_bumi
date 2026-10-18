@@ -1,4 +1,4 @@
-name: Build Kernel Custom (Manual Run)
+name: Build Kernel Custom (Manual)
 
 on:
   workflow_dispatch:
