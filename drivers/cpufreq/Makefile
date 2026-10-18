@@ -9,6 +9,7 @@ obj-$(CONFIG_CPU_FREQ_STAT)             += cpufreq_stats.o
 obj-$(CONFIG_CPU_FREQ_TIMES)		+= cpufreq_times.o
 
 # CPUfreq governors
+obj-$(CONFIG_CPU_FREQ_GOV_LAGFREE)      += cpufreq_lagfree.o
 obj-$(CONFIG_CPU_FREQ_GOV_PERFORMANCE)	+= cpufreq_performance.o
 obj-$(CONFIG_CPU_FREQ_GOV_POWERSAVE)	+= cpufreq_powersave.o
 obj-$(CONFIG_CPU_FREQ_GOV_USERSPACE)	+= cpufreq_userspace.o
@@ -59,6 +60,7 @@ obj-$(CONFIG_ARM_DT_BL_CPUFREQ)		+= arm_big_little_dt.o
 
 obj-$(CONFIG_ARM_ARMADA_37XX_CPUFREQ)	+= armada-37xx-cpufreq.o
 obj-$(CONFIG_ARM_BRCMSTB_AVS_CPUFREQ)	+= brcmstb-avs-cpufreq.o
+CFLAGS_cppc_cpufreq.o = -Wno-unneeded-internal-declaration
 obj-$(CONFIG_ACPI_CPPC_CPUFREQ)		+= cppc_cpufreq.o
 obj-$(CONFIG_ARCH_DAVINCI)		+= davinci-cpufreq.o
 obj-$(CONFIG_ARM_HIGHBANK_CPUFREQ)	+= highbank-cpufreq.o
