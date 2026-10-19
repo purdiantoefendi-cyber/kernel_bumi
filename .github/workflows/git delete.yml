@@ -1,21 +1,21 @@
-name: Hapus Submodule Custom
+name: Hapus Submodule Custom (Multi)
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: 'Branch tempat submodule berada (Contoh: diantk2, master)'
+        description: 'Branch tempat submodule berada (Contoh: diantk2)'
         required: true
         type: string
         default: 'diantk2'
-      submodule_name:
-        description: 'Nama folder/path submodule yang ingin dihapus (Contoh: KernelSU-Next)'
+      submodule_list:
+        description: 'Daftar Submodule (Pisahkan dengan Spasi atau Enter)'
         required: true
         type: string
-        default: 'KernelSU-Next'
+        default: 'KernelSU-Next SukiSU'
 
 jobs:
-  delete-submodule:
+  delete-submodules:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -32,40 +32,49 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
 
-      - name: 🗑️ Hapus Submodule & Bersihkan Cache
+      - name: 🗑️ Hapus Daftar Submodule & Bersihkan Cache
+        env:
+          SUBMODULE_LIST_INPUT: ${{ inputs.submodule_list }}
         run: |
-          TARGET="${{ inputs.submodule_name }}"
+          # Membaca daftar input dan memisahkannya (mendukung spasi & baris baru)
+          mapfile -t SUBMODULES < <(echo "$SUBMODULE_LIST_INPUT" | tr ' ' '\n' | grep -v '^$')
           
-          echo "=========================================================="
-          echo "Memulai penghapusan submodule: $TARGET"
-          echo "=========================================================="
-          
-          # 1. Hapus submodule dari indeks Git (ini otomatis menghapus entri dari .gitmodules)
-          git rm -f "$TARGET" || echo "⚠️ Peringatan: Gagal melakukan git rm, mungkin submodule sudah tidak terdaftar."
-          
-          # 2. Hapus cache submodule di direktori internal .git
-          rm -rf ".git/modules/$TARGET"
-          
-          # 3. Hapus sisa konfigurasi internal git
-          git config --remove-section "submodule.$TARGET" 2>/dev/null || true
-          
-          # 4. Hapus paksa folder fisik jika masih tertinggal
-          rm -rf "$TARGET"
-          
-          echo "✅ Pembersihan cache sistem selesai."
+          echo "Ditemukan ${#SUBMODULES[@]} submodule untuk diproses."
+
+          for TARGET in "${SUBMODULES[@]}"; do
+            # Bersihkan karakter tersembunyi (\r)
+            TARGET=$(echo "$TARGET" | tr -d '\r')
+            if [ -z "$TARGET" ]; then continue; fi
+
+            echo "=========================================================="
+            echo "Memulai penghapusan: $TARGET"
+            echo "=========================================================="
+            
+            # 1. Hapus dari indeks Git
+            git rm -f "$TARGET" || echo "⚠️ Lewati: $TARGET mungkin sudah tidak terdaftar di Git."
+            
+            # 2. Hapus cache submodule
+            rm -rf ".git/modules/$TARGET"
+            
+            # 3. Hapus sisa konfigurasi
+            git config --remove-section "submodule.$TARGET" 2>/dev/null || true
+            
+            # 4. Hapus folder fisik
+            rm -rf "$TARGET"
+            
+            echo "✅ $TARGET bersih dari sistem."
+          done
 
       - name: 🚀 Commit dan Push Perubahan
         run: |
           BRANCH="${{ inputs.target_branch }}"
-          TARGET="${{ inputs.submodule_name }}"
           
-          # Cek apakah Git mendeteksi adanya perubahan/penghapusan
           if [[ -n $(git status --porcelain) ]]; then
             echo "Mendeteksi perubahan, menyiapkan commit..."
             git add .
-            git commit -m "chore: remove submodule $TARGET"
+            git commit -m "chore: remove selected submodules"
             git push origin "$BRANCH"
-            echo "✅ Selesai! Submodule $TARGET berhasil dihapus secara permanen dari branch $BRANCH."
+            echo "✅ Selesai! Semua submodule yang dipilih berhasil dihapus dari branch $BRANCH."
           else
-            echo "ℹ️ Tidak ada perubahan yang terdeteksi. Submodule mungkin sudah terhapus atau nama folder tidak cocok."
+            echo "ℹ️ Tidak ada perubahan. Submodule tersebut mungkin sudah tidak ada."
           fi
