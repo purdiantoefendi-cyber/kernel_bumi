@@ -1,0 +1,71 @@
+name: Hapus Submodule Custom
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch tempat submodule berada (Contoh: diantk2, master)'
+        required: true
+        type: string
+        default: 'diantk2'
+      submodule_name:
+        description: 'Nama folder/path submodule yang ingin dihapus (Contoh: KernelSU-Next)'
+        required: true
+        type: string
+        default: 'KernelSU-Next'
+
+jobs:
+  delete-submodule:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Target Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: ⚙️ Konfigurasi Git User
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+      - name: 🗑️ Hapus Submodule & Bersihkan Cache
+        run: |
+          TARGET="${{ inputs.submodule_name }}"
+          
+          echo "=========================================================="
+          echo "Memulai penghapusan submodule: $TARGET"
+          echo "=========================================================="
+          
+          # 1. Hapus submodule dari indeks Git (ini otomatis menghapus entri dari .gitmodules)
+          git rm -f "$TARGET" || echo "⚠️ Peringatan: Gagal melakukan git rm, mungkin submodule sudah tidak terdaftar."
+          
+          # 2. Hapus cache submodule di direktori internal .git
+          rm -rf ".git/modules/$TARGET"
+          
+          # 3. Hapus sisa konfigurasi internal git
+          git config --remove-section "submodule.$TARGET" 2>/dev/null || true
+          
+          # 4. Hapus paksa folder fisik jika masih tertinggal
+          rm -rf "$TARGET"
+          
+          echo "✅ Pembersihan cache sistem selesai."
+
+      - name: 🚀 Commit dan Push Perubahan
+        run: |
+          BRANCH="${{ inputs.target_branch }}"
+          TARGET="${{ inputs.submodule_name }}"
+          
+          # Cek apakah Git mendeteksi adanya perubahan/penghapusan
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Mendeteksi perubahan, menyiapkan commit..."
+            git add .
+            git commit -m "chore: remove submodule $TARGET"
+            git push origin "$BRANCH"
+            echo "✅ Selesai! Submodule $TARGET berhasil dihapus secara permanen dari branch $BRANCH."
+          else
+            echo "ℹ️ Tidak ada perubahan yang terdeteksi. Submodule mungkin sudah terhapus atau nama folder tidak cocok."
+          fi
