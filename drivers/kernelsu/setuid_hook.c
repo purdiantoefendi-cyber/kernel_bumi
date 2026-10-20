@@ -145,8 +145,6 @@ do_umount:
     // Handle kernel umount
 #ifndef CONFIG_KSU_SUSFS_TRY_UMOUNT
     ksu_handle_umount(old_uid, new_uid);
-#else
-    susfs_try_umount(new_uid);
 #endif // #ifndef CONFIG_KSU_SUSFS_TRY_UMOUNT
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
     // We can reorder the mnt_id now after all sus mounts are umounted
