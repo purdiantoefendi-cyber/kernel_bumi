@@ -15,6 +15,7 @@
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/namei.h>
 #include <linux/susfs.h>
+#include <linux/susfs_def.h>
 #include "objsec.h"
 #endif // #ifdef CONFIG_KSU_SUSFS
 
