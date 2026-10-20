@@ -899,7 +899,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
         if (cmd == CMD_SUSFS_ADD_TRY_UMOUNT) {
-            susfs_add_try_umount(arg);
+            add_try_umount(arg);
             return 0;
         }
 #endif //#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
