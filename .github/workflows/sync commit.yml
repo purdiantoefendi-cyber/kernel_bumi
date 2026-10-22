@@ -1,0 +1,69 @@
+name: Sync Missing Commits
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: 'Repo Asal (format: username/repo-asal)'
+        required: true
+        default: 'pemilik/repo-asal'
+      source_branch:
+        description: 'Branch Asal'
+        required: true
+        default: 'custom-branch-1'
+      target_branch:
+        description: 'Branch Tujuan di Repo Ini'
+        required: true
+        default: 'custom-branch'
+
+jobs:
+  sync-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo Tujuan
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Identitas Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tambah Remote & Fetch Branch Asal
+        run: |
+          # Menggunakan GH_PAT jika repo asal bersifat private
+          git remote add source https://x-access-token:${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}@github.com/${{ github.event.inputs.source_repo }}.git
+          git fetch source ${{ github.event.inputs.source_branch }}
+
+      - name: Transfer Commit Baru (Skip yang Sudah Ada)
+        run: |
+          SOURCE_REF="source/${{ github.event.inputs.source_branch }}"
+          TARGET_REF="${{ github.event.inputs.target_branch }}"
+
+          # Ambil daftar SHA commit yang ada di source tapi belum ada di target
+          COMMITS=$(git rev-list ${TARGET_REF}..${SOURCE_REF} --reverse)
+
+          if [ -z "$COMMITS" ]; then
+            echo "Tidak ada commit baru yang perlu ditransfer."
+            exit 0
+          fi
+
+          echo "Memindahkan commit berikut:"
+          echo "$COMMITS"
+
+          # Loop dan masukan commit satu per satu
+          for commit in $COMMITS; do
+            echo "Mencoba cherry-pick commit: $commit"
+            if ! git cherry-pick $commit; then
+              echo "Commit $commit sudah ada / terjadi konflik, dilewati..."
+              git cherry-pick --skip
+            fi
+          done
+
+      - name: Push Perubahan ke Branch Tujuan
+        run: |
+          git push origin ${{ github.event.inputs.target_branch }}
