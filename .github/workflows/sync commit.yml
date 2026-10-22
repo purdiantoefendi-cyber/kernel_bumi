@@ -16,6 +16,10 @@ on:
         required: true
         default: 'custom-branch'
 
+# Memberikan izin akses tulis ke repositori
+permissions:
+  contents: write
+
 jobs:
   sync-commits:
     runs-on: ubuntu-latest
@@ -43,7 +47,6 @@ jobs:
           SOURCE_REF="source/${{ github.event.inputs.source_branch }}"
           TARGET_REF="${{ github.event.inputs.target_branch }}"
 
-          # Ambil daftar commit yang belum ada di branch target
           COMMITS=$(git rev-list ${TARGET_REF}..${SOURCE_REF} --reverse)
 
           if [ -z "$COMMITS" ]; then
@@ -57,7 +60,6 @@ jobs:
           for commit in $COMMITS; do
             echo "Mencoba cherry-pick commit: $commit"
 
-            # Cek apakah commit ini adalah merge commit (memiliki lebih dari 1 parent)
             if git rev-parse ${commit}^2 >/dev/null 2>&1; then
               echo "Mengirim MERGE COMMIT $commit dengan opsi -m 1"
               CHERRY_CMD="git cherry-pick -m 1 $commit"
@@ -65,9 +67,8 @@ jobs:
               CHERRY_CMD="git cherry-pick $commit"
             fi
 
-            # Eksekusi cherry-pick dan lewati jika terjadi konflik/duplikasi
             if ! $CHERRY_CMD; then
-              echo "Commit $commit sudah ada, mengalami konflik, atau kosong. Melewati..."
+              echo "Commit $commit dilewati..."
               git cherry-pick --skip 2>/dev/null || git cherry-pick --abort 2>/dev/null || true
             fi
           done
