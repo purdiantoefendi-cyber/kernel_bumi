@@ -35,16 +35,15 @@ jobs:
 
       - name: Tambah Remote & Fetch Branch Asal
         run: |
-          # Menggunakan GH_PAT jika repo asal bersifat private
           git remote add source https://x-access-token:${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}@github.com/${{ github.event.inputs.source_repo }}.git
           git fetch source ${{ github.event.inputs.source_branch }}
 
-      - name: Transfer Commit Baru (Skip yang Sudah Ada)
+      - name: Transfer Semua Commit (Termasuk Merge Commit)
         run: |
           SOURCE_REF="source/${{ github.event.inputs.source_branch }}"
           TARGET_REF="${{ github.event.inputs.target_branch }}"
 
-          # Ambil daftar SHA commit yang ada di source tapi belum ada di target
+          # Ambil daftar commit yang belum ada di branch target
           COMMITS=$(git rev-list ${TARGET_REF}..${SOURCE_REF} --reverse)
 
           if [ -z "$COMMITS" ]; then
@@ -55,12 +54,21 @@ jobs:
           echo "Memindahkan commit berikut:"
           echo "$COMMITS"
 
-          # Loop dan masukan commit satu per satu
           for commit in $COMMITS; do
             echo "Mencoba cherry-pick commit: $commit"
-            if ! git cherry-pick $commit; then
-              echo "Commit $commit sudah ada / terjadi konflik, dilewati..."
-              git cherry-pick --skip
+
+            # Cek apakah commit ini adalah merge commit (memiliki lebih dari 1 parent)
+            if git rev-parse ${commit}^2 >/dev/null 2>&1; then
+              echo "Mengirim MERGE COMMIT $commit dengan opsi -m 1"
+              CHERRY_CMD="git cherry-pick -m 1 $commit"
+            else
+              CHERRY_CMD="git cherry-pick $commit"
+            fi
+
+            # Eksekusi cherry-pick dan lewati jika terjadi konflik/duplikasi
+            if ! $CHERRY_CMD; then
+              echo "Commit $commit sudah ada, mengalami konflik, atau kosong. Melewati..."
+              git cherry-pick --skip 2>/dev/null || git cherry-pick --abort 2>/dev/null || true
             fi
           done
 
