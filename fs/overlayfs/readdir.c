@@ -658,7 +658,7 @@ static int ovl_fill_real(struct dir_context *ctx, const char *name,
 		container_of(ctx, struct ovl_readdir_translate, ctx);
 	struct dir_context *orig_ctx = rdt->orig_ctx;
 
-	if (rdt->parent_ino && namelen == 2 && !strncmp(name, "..", 2)) {
+	if (rdt->parent_ino && strcmp(name, "..") == 0) {
 		ino = rdt->parent_ino;
 	} else if (rdt->cache) {
 		struct ovl_cache_entry *p;
@@ -896,6 +896,7 @@ static int ovl_dir_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	type = ovl_path_real(file->f_path.dentry, &realpath);
+
 	realfile = ovl_path_open(&realpath, file->f_flags);
 	if (IS_ERR(realfile)) {
 		kfree(od);

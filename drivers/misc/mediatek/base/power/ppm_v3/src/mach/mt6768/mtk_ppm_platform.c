@@ -59,7 +59,7 @@ static int ppm_cpu_freq_callback(struct notifier_block *nb,
 {
 	struct ppm_cluster_status cl_status[NR_PPM_CLUSTERS] = { {0} };
 	struct cpufreq_freqs *freq = data;
-	int cpu = freq->policy->cpu;
+	int cpu = freq->cpu;
 	int i, is_root_cpu = 0;
 
 	if (freq->flags & CPUFREQ_CONST_LOOPS)
@@ -376,4 +376,13 @@ unsigned int mt_ppm_get_leakage_mw(enum ppm_cluster_lkg cluster)
 	}
 
 	return mw;
+}
+	/* DUMMY FIX FOR PPM THERMAL OFF */
+int get_immediate_cpuB_wrap(void)
+{
+    return 0; 
+}
+int get_immediate_cpuL_wrap(void)
+{
+    return 0; 
 }

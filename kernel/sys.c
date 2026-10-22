@@ -72,6 +72,9 @@
 #include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/unistd.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include <mt-plat/turbo_common.h>
+#endif
 
 #include "uid16.h"
 
@@ -293,6 +296,14 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 			if (niceval > retval)
 				retval = niceval;
 		}
+#ifdef CONFIG_MTK_ENG_BUILD
+		if (retval == -ESRCH && current->pid == who) {
+			pr_warn("getpriority return unexpected value who:%d "
+				"current:%d niceval:%d retvale:%d", who,
+				current->pid, niceval, retval);
+			BUG();
+		}
+#endif
 		break;
 	case PRIO_PGRP:
 		if (who)
@@ -1240,12 +1251,46 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+#ifndef CONFIG_FAKE_UNAME_NONE
+#if defined(CONFIG_FAKE_UNAME_5_4)
+#define FAKE_UNAME "5.4.296"
+#elif defined(CONFIG_FAKE_UNAME_5_10)
+#define FAKE_UNAME "5.10.241"
+#elif defined(CONFIG_FAKE_UNAME_5_15)
+#define FAKE_UNAME "5.15.190"
+#elif defined(CONFIG_FAKE_UNAME_6_1)
+#define FAKE_UNAME "6.1.149"
+#elif defined(CONFIG_FAKE_UNAME_6_6)
+#define FAKE_UNAME "6.6.103"
+#elif defined(CONFIG_FAKE_UNAME_6_12)
+#define FAKE_UNAME "6.12.44"
+#endif
+#endif
+
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern void susfs_spoof_uname(struct new_utsname* tmp);
+#endif
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
+
+#ifndef CONFIG_FAKE_UNAME_NONE
+	if (!strncmp(current->comm, "bpfloader", 9) ||
+	    !strncmp(current->comm, "netbpfload", 10) ||
+	    !strncmp(current->comm, "netd", 4) ||
+	    !strncmp(current->comm, "uprobestats", 11)) {
+		strcpy(tmp.release, FAKE_UNAME);
+		pr_debug("fake uname: %s/%d release=%s\n",
+			 current->comm, current->pid, tmp.release);
+	}
+#endif
+	
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	susfs_spoof_uname(&tmp);
+#endif
 	up_read(&uts_sem);
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
@@ -1861,7 +1906,7 @@ static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 	if (!S_ISREG(inode->i_mode) || path_noexec(&exe.file->f_path))
 		goto exit;
 
-	err = file_permission(exe.file, MAY_EXEC);
+	err = inode_permission(inode, MAY_EXEC);
 	if (err)
 		goto exit;
 
@@ -1902,14 +1947,13 @@ exit_err:
 }
 
 /*
- * Check arithmetic relations of passed addresses.
- *
  * WARNING: we don't require any capability here so be very careful
  * in what is allowed for modification from userspace.
  */
-static int validate_prctl_map_addr(struct prctl_mm_map *prctl_map)
+static int validate_prctl_map(struct prctl_mm_map *prctl_map)
 {
 	unsigned long mmap_max_addr = TASK_SIZE;
+	struct mm_struct *mm = current->mm;
 	int error = -EINVAL, i;
 
 	static const unsigned char offsets[] = {
@@ -1963,6 +2007,24 @@ static int validate_prctl_map_addr(struct prctl_mm_map *prctl_map)
 			      prctl_map->start_data))
 			goto out;
 
+	/*
+	 * Someone is trying to cheat the auxv vector.
+	 */
+	if (prctl_map->auxv_size) {
+		if (!prctl_map->auxv || prctl_map->auxv_size > sizeof(mm->saved_auxv))
+			goto out;
+	}
+
+	/*
+	 * Finally, make sure the caller has the rights to
+	 * change /proc/pid/exe link: only local sys admin should
+	 * be allowed to.
+	 */
+	if (prctl_map->exe_fd != (u32)-1) {
+		if (!ns_capable(current_user_ns(), CAP_SYS_ADMIN))
+			goto out;
+	}
+
 	error = 0;
 out:
 	return error;
@@ -1989,18 +2051,11 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
 	if (copy_from_user(&prctl_map, addr, sizeof(prctl_map)))
 		return -EFAULT;
 
-	error = validate_prctl_map_addr(&prctl_map);
+	error = validate_prctl_map(&prctl_map);
 	if (error)
 		return error;
 
 	if (prctl_map.auxv_size) {
-		/*
-		 * Someone is trying to cheat the auxv vector.
-		 */
-		if (!prctl_map.auxv ||
-				prctl_map.auxv_size > sizeof(mm->saved_auxv))
-			return -EINVAL;
-
 		memset(user_auxv, 0, sizeof(user_auxv));
 		if (copy_from_user(user_auxv,
 				   (const void __user *)prctl_map.auxv,
@@ -2013,17 +2068,6 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
 	}
 
 	if (prctl_map.exe_fd != (u32)-1) {
-		/*
-		 * Check if the current user is checkpoint/restore capable.
-		 * At the time of this writing, it checks for CAP_SYS_ADMIN
-		 * or CAP_CHECKPOINT_RESTORE.
-		 * Note that a user with access to ptrace can masquerade an
-		 * arbitrary program as any executable, even setuid ones.
-		 * This may have implications in the tomoyo subsystem.
-		 */
-		if (!checkpoint_restore_ns_capable(current_user_ns()))
-			return -EPERM;
-
 		error = prctl_set_mm_exe_file(mm, prctl_map.exe_fd);
 		if (error)
 			return error;
@@ -2111,11 +2155,7 @@ static int prctl_set_mm(int opt, unsigned long addr,
 			unsigned long arg4, unsigned long arg5)
 {
 	struct mm_struct *mm = current->mm;
-	struct prctl_mm_map prctl_map = {
-		.auxv = NULL,
-		.auxv_size = 0,
-		.exe_fd = -1,
-	};
+	struct prctl_mm_map prctl_map;
 	struct vm_area_struct *vma;
 	int error;
 
@@ -2157,6 +2197,9 @@ static int prctl_set_mm(int opt, unsigned long addr,
 	prctl_map.arg_end	= mm->arg_end;
 	prctl_map.env_start	= mm->env_start;
 	prctl_map.env_end	= mm->env_end;
+	prctl_map.auxv		= NULL;
+	prctl_map.auxv_size	= 0;
+	prctl_map.exe_fd	= -1;
 
 	switch (opt) {
 	case PR_SET_MM_START_CODE:
@@ -2196,7 +2239,7 @@ static int prctl_set_mm(int opt, unsigned long addr,
 		goto out;
 	}
 
-	error = validate_prctl_map_addr(&prctl_map);
+	error = validate_prctl_map(&prctl_map);
 	if (error)
 		goto out;
 
@@ -2491,6 +2534,9 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			return -EFAULT;
 		set_task_comm(me, comm);
 		proc_comm_connector(me);
+#ifdef CONFIG_MTK_TASK_TURBO
+		sys_set_turbo_task(me);
+#endif
 		break;
 	case PR_GET_NAME:
 		get_task_comm(comm, me);

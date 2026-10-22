@@ -11,11 +11,20 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <trace/events/sched.h>
+
 #include "sched.h"
 
 #include <linux/sched/cpufreq.h>
 #include <trace/events/power.h>
+#include <linux/suspend.h>
+#include <linux/cpu.h>
+#include <linux/workqueue.h>
+#include <linux/fb.h>
 #include "cpufreq_schedutil.h"
+
+void (*cpufreq_notifier_fp)(int cluster_id, unsigned long freq);
+EXPORT_SYMBOL(cpufreq_notifier_fp);
 
 struct sugov_tunables {
 	struct gov_attr_set	attr_set;
@@ -70,6 +79,62 @@ struct sugov_cpu {
 };
 
 static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
+
+/* Sensor Status Layar/Sleep */
+bool sugov_suspended = false;
+
+/* PEKERJA HOTPLUG EKSTREM: Rute Langsung */
+static void big_cluster_hotplug_work_fn(struct work_struct *work)
+{
+        int cpu;
+        
+        lock_device_hotplug();
+        
+        if (sugov_suspended) {
+                /* EKSEKUSI BUTA: Langsung tembak mati CPU 6 & 7 tanpa pengecekan online */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        cpu_down(cpu);
+                }
+        } else {
+                /* EKSEKUSI BUTA: Langsung alirkan arus ke CPU 6 & 7 */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        cpu_up(cpu);
+                }
+        }
+        
+        unlock_device_hotplug();
+}
+static DECLARE_WORK(big_cluster_hotplug_work, big_cluster_hotplug_work_fn);
+
+/* --------------------------------------------------------- */
+/* SENSOR LAYAR TUNGGAL (FRAMEBUFFER) - Tanpa Fungsi Penengah*/
+/* --------------------------------------------------------- */
+static int sugov_fb_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+        struct fb_event *event = data;
+        int *blank;
+
+        if (action != FB_EVENT_BLANK || !event || !event->data)
+                return NOTIFY_DONE;
+
+        blank = event->data;
+
+        if (*blank == FB_BLANK_POWERDOWN) {
+                /* LAYAR MATI: Set logis dan langsung masukkan antrean VIP */
+                sugov_suspended = true;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
+        } else if (*blank == FB_BLANK_UNBLANK) {
+                /* LAYAR NYALA: Set logis dan langsung bangunkan */
+                sugov_suspended = false;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
+        }
+        
+        return NOTIFY_OK;
+}
+
+static struct notifier_block sugov_fb_notifier = {
+        .notifier_call = sugov_fb_notify,
+};
 
 /************************ Governor internals ***********************/
 
@@ -227,7 +292,11 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	unsigned int freq = arch_scale_freq_invariant() ?
 				policy->cpuinfo.max_freq : policy->cur;
 
+#ifdef CONFIG_MTK_SCHED_EXTENSION
+	freq = map_util_freq_with_margin(util, freq, max);
+#else
 	freq = map_util_freq(util, freq, max);
+#endif
 
 #ifdef CONFIG_MTK_TINYSYS_SSPM_SUPPORT
 	freq = clamp_val(freq, policy->min, policy->max);
@@ -439,6 +508,7 @@ static void sugov_iowait_boost(struct sugov_cpu *sg_cpu, u64 time,
 	if (sg_cpu->iowait_boost) {
 		sg_cpu->iowait_boost =
 			min_t(unsigned int, sg_cpu->iowait_boost << 1, SCHED_CAPACITY_SCALE);
+
 		return;
 	}
 
@@ -522,6 +592,12 @@ static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu, struct sugov_p
 		WRITE_ONCE(sg_policy->limits_changed, true);
 }
 
+static inline void __cpufreq_notifier_fp(int cid, unsigned int next_f)
+{
+	if (cpufreq_notifier_fp)
+		cpufreq_notifier_fp(cid, next_f);
+}
+
 static void sugov_update_single(struct update_util_data *hook, u64 time,
 				unsigned int flags)
 {
@@ -535,13 +611,17 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	unsigned int next_f;
 	bool busy;
 
+	raw_spin_lock(&sg_policy->update_lock);
+
 	sugov_iowait_boost(sg_cpu, time, flags);
 	sg_cpu->last_update = time;
 
 	ignore_dl_rate_limit(sg_cpu, sg_policy);
 
-	if (!sugov_should_update_freq(sg_policy, time))
+	if (!sugov_should_update_freq(sg_policy, time)) {
+		raw_spin_unlock(&sg_policy->update_lock);
 		return;
+	}
 
 	/* Limits may have changed, don't skip frequency update */
 	busy = !sg_policy->need_freq_update && sugov_cpu_is_busy(sg_cpu);
@@ -549,6 +629,9 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	util = sugov_get_util(sg_cpu);
 	max = sg_cpu->max;
 	util = sugov_iowait_apply(sg_cpu, time, util, max);
+#ifdef CONFIG_UCLAMP_TASK
+	trace_schedutil_uclamp_util(policy->cpu, util);
+#endif
 	next_f = get_next_freq(sg_policy, util, max);
 	/*
 	 * Do not reduce the frequency if the CPU has not been idle
@@ -565,8 +648,10 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	if (sugov_update_next_freq(sg_policy, time, next_f)) {
 		mt_cpufreq_set_by_wfi_load_cluster(cid, next_f);
 		policy->cur = next_f;
+		trace_sched_util(cid, next_f, time);
 	}
 #else
+
 	/*
 	 * This code runs under rq->lock for the target CPU, so it won't run
 	 * concurrently on two different CPUs for the same target and it is not
@@ -575,13 +660,14 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	if (sg_policy->policy->fast_switch_enabled) {
 		sugov_fast_switch(sg_policy, time, next_f);
 	} else {
-		raw_spin_lock(&sg_policy->update_lock);
 		sugov_deferred_update(sg_policy, time, next_f);
-		raw_spin_unlock(&sg_policy->update_lock);
 	}
 #endif
-}
 
+	__cpufreq_notifier_fp(cid, next_f);
+	raw_spin_unlock(&sg_policy->update_lock);
+
+}
 
 static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
 {
@@ -601,6 +687,10 @@ static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
 		j_util = sugov_get_util(j_sg_cpu);
 		j_max = j_sg_cpu->max;
 		j_util = sugov_iowait_apply(j_sg_cpu, time, j_util, j_max);
+
+#ifdef CONFIG_UCLAMP_TASK
+		trace_schedutil_uclamp_util(j, j_util);
+#endif
 
 		if (j_util * max > j_max * util) {
 			util = j_util;
@@ -642,12 +732,15 @@ sugov_update_shared(struct update_util_data *hook, u64 time, unsigned int flags)
 		if (sugov_update_next_freq(sg_policy, time, next_f)) {
 			next_f = mt_cpufreq_find_close_freq(cid, next_f);
 			mt_cpufreq_set_by_wfi_load_cluster(cid, next_f);
+			__cpufreq_notifier_fp(cid, next_f);
+			trace_sched_util(cid, next_f, time);
 		}
 #else
 		if (sg_policy->policy->fast_switch_enabled)
 			sugov_fast_switch(sg_policy, time, next_f);
 		else
 			sugov_deferred_update(sg_policy, time, next_f);
+		__cpufreq_notifier_fp(cid, next_f);
 #endif
 	}
 
@@ -788,6 +881,86 @@ static struct kobj_type sugov_tunables_ktype = {
 /********************** cpufreq governor interface *********************/
 
 struct cpufreq_governor schedutil_gov;
+
+int schedutil_set_down_rate_limit_us(int cpu, unsigned int rate_limit_us)
+{
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+	struct gov_attr_set *attr_set;
+
+	policy = cpufreq_cpu_get(cpu);
+	if (!policy)
+		return -EINVAL;
+
+	if (policy->governor != &schedutil_gov)
+		return -ENOENT;
+
+	mutex_lock(&global_tunables_lock);
+	sg_policy = policy->governor_data;
+	if (!sg_policy) {
+		mutex_unlock(&global_tunables_lock);
+		cpufreq_cpu_put(policy);
+		return -EINVAL;
+	}
+
+	tunables = sg_policy->tunables;
+	tunables->down_rate_limit_us = rate_limit_us;
+	attr_set = &tunables->attr_set;
+
+	mutex_lock(&attr_set->update_lock);
+	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
+		sg_policy->down_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+		update_min_rate_limit_ns(sg_policy);
+	}
+	mutex_unlock(&attr_set->update_lock);
+	mutex_unlock(&global_tunables_lock);
+
+	if (policy)
+		cpufreq_cpu_put(policy);
+	return 0;
+}
+EXPORT_SYMBOL(schedutil_set_down_rate_limit_us);
+
+int schedutil_set_up_rate_limit_us(int cpu, unsigned int rate_limit_us)
+{
+	struct cpufreq_policy *policy;
+	struct sugov_policy *sg_policy;
+	struct sugov_tunables *tunables;
+	struct gov_attr_set *attr_set;
+
+	policy = cpufreq_cpu_get(cpu);
+	if (!policy)
+		return -EINVAL;
+
+	if (policy->governor != &schedutil_gov)
+		return -ENOENT;
+
+	mutex_lock(&global_tunables_lock);
+	sg_policy = policy->governor_data;
+	if (!sg_policy) {
+		mutex_unlock(&global_tunables_lock);
+		cpufreq_cpu_put(policy);
+		return -EINVAL;
+	}
+
+	tunables = sg_policy->tunables;
+	tunables->up_rate_limit_us = rate_limit_us;
+	attr_set = &tunables->attr_set;
+
+	mutex_lock(&attr_set->update_lock);
+	list_for_each_entry(sg_policy, &attr_set->policy_list, tunables_hook) {
+		sg_policy->up_rate_delay_ns = rate_limit_us * NSEC_PER_USEC;
+		update_min_rate_limit_ns(sg_policy);
+	}
+	mutex_unlock(&attr_set->update_lock);
+	mutex_unlock(&global_tunables_lock);
+
+	if (policy)
+		cpufreq_cpu_put(policy);
+	return 0;
+}
+EXPORT_SYMBOL(schedutil_set_up_rate_limit_us);
 
 static struct sugov_policy *sugov_policy_alloc(struct cpufreq_policy *policy)
 {
@@ -932,8 +1105,9 @@ static int sugov_init(struct cpufreq_policy *policy)
 		goto stop_kthread;
 	}
 
-	tunables->up_rate_limit_us = cpufreq_policy_transition_delay_us(policy);
-	tunables->down_rate_limit_us = cpufreq_policy_transition_delay_us(policy);
+	/* Paksa delay menjadi 10ms (10000 us) agar super responsif seperti Lagfree */
+	tunables->up_rate_limit_us = 10000;
+	tunables->down_rate_limit_us = 10000;
 
 	policy->governor_data = sg_policy;
 	sg_policy->tunables = tunables;
@@ -943,6 +1117,7 @@ static int sugov_init(struct cpufreq_policy *policy)
 				   schedutil_gov.name);
 	if (ret)
 		goto fail;
+
 
 out:
 	mutex_unlock(&global_tunables_lock);
@@ -1063,6 +1238,7 @@ static void sugov_limits(struct cpufreq_policy *policy)
 	smp_wmb();
 
 	WRITE_ONCE(sg_policy->limits_changed, true);
+
 }
 
 struct cpufreq_governor schedutil_gov = {
@@ -1085,7 +1261,9 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 
 static int __init sugov_register(void)
 {
-	return cpufreq_register_governor(&schedutil_gov);
+        /* Hanya daftarkan Framebuffer*/
+        fb_register_client(&sugov_fb_notifier); 
+        return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
 

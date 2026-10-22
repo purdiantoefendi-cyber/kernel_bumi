@@ -95,6 +95,9 @@
 #include <linux/flex_array.h>
 #include <linux/posix-timers.h>
 #include <linux/cpufreq_times.h>
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+#include <linux/susfs_def.h>
+#endif
 #include <trace/events/oom.h>
 #include "internal.h"
 #include "fd.h"
@@ -825,6 +828,9 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 	ssize_t copied;
 	char *page;
 	unsigned int flags;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	struct vm_area_struct *vma;
+#endif
 
 	if (!mm)
 		return 0;
@@ -841,6 +847,22 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 
 	while (count > 0) {
 		size_t this_len = min_t(size_t, count, PAGE_SIZE);
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		vma = find_vma(mm, addr);
+		if (vma && vma->vm_file) {
+			struct inode *inode = file_inode(vma->vm_file);
+			if (unlikely(inode->i_mapping->flags & BIT_SUS_MAPS) && susfs_is_current_proc_umounted()) {
+				if (write) {
+					copied = -EFAULT;
+				} else {
+					copied = -EIO;
+				}
+				*ppos = addr;
+				mmput(mm);
+				goto free;
+			}
+		}
+#endif
 
 		if (write && copy_from_user(page, buf, this_len)) {
 			copied = -EFAULT;
@@ -2059,16 +2081,16 @@ struct map_files_info {
 };
 
 /*
- * Only allow CAP_SYS_ADMIN and CAP_CHECKPOINT_RESTORE to follow the links, due
- * to concerns about how the symlinks may be used to bypass permissions on
- * ancestor directories in the path to the file in question.
+ * Only allow CAP_SYS_ADMIN to follow the links, due to concerns about how the
+ * symlinks may be used to bypass permissions on ancestor directories in the
+ * path to the file in question.
  */
 static const char *
 proc_map_files_get_link(struct dentry *dentry,
 			struct inode *inode,
 		        struct delayed_call *done)
 {
-	if (!checkpoint_restore_ns_capable(&init_user_ns))
+	if (!capable(CAP_SYS_ADMIN))
 		return ERR_PTR(-EPERM);
 
 	return proc_pid_get_link(dentry, inode, done);
@@ -2230,6 +2252,13 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 				vma = vma->vm_next) {
 			if (!vma->vm_file)
 				continue;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		if (unlikely(file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS) &&
+			susfs_is_current_proc_umounted())
+		{
+			continue;
+		}
+#endif
 			if (++pos <= ctx->pos)
 				continue;
 
@@ -2999,6 +3028,26 @@ static int proc_pid_patch_state(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif /* CONFIG_LIVEPATCH */
 
+#ifdef CONFIG_MTK_TASK_TURBO
+static int proc_turbo_task_show(struct seq_file *m, struct pid_namespace *ns,
+		struct pid *pid, struct task_struct *p)
+{
+	unsigned int is_turbo;
+	unsigned int is_inherit_turbo;
+
+	if (!p)
+		return -ESRCH;
+	task_lock(p);
+	is_turbo = p->turbo;
+	is_inherit_turbo = atomic_read(&p->inherit_types);
+	seq_printf(m, "tid=%d turbo = %d,inherit turbo = %d prio=%d bk_prio=%d\n",
+			p->pid, is_turbo, is_inherit_turbo,
+			p->prio, NICE_TO_PRIO(p->nice_backup));
+	task_unlock(p);
+	return 0;
+}
+#endif
+
 /*
  * Thread groups
  */
@@ -3493,6 +3542,9 @@ static const struct pid_entry tid_base_stuff[] = {
 #endif
 #ifdef CONFIG_CPU_FREQ_TIMES
 	ONE("time_in_state", 0444, proc_time_in_state_show),
+#endif
+#ifdef CONFIG_MTK_TASK_TURBO
+	ONE("turbo", 0444, proc_turbo_task_show),
 #endif
 };
 

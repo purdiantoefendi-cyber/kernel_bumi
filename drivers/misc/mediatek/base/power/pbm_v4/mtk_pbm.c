@@ -337,8 +337,10 @@ static void pbm_allocate_budget_manager(void)
 		if (tocpu <= 0)
 			tocpu = 1;
 
-		if (pbm_ctrl.manual_mode != 2)
-			mt_ppm_dlpt_set_limit_by_pbm(tocpu);
+		if (pbm_ctrl.manual_mode != 2) {
+			/* BYPASS: Kirim 0 untuk melepas limitasi DLPT pada CPU */
+			mt_ppm_dlpt_set_limit_by_pbm(0);
+		}
 	} else {
 		multiple = (_dlpt * 1000) / (cpu + gpu);
 
@@ -362,8 +364,9 @@ static void pbm_allocate_budget_manager(void)
 			togpu = 1;
 
 		if (pbm_ctrl.manual_mode != 2) {
-			mt_ppm_dlpt_set_limit_by_pbm(tocpu);
-			mt_gpufreq_set_power_limit_by_pbm(togpu);
+			/* BYPASS: Kirim 0 untuk melepas limitasi daya pada CPU dan GPU */
+			mt_ppm_dlpt_set_limit_by_pbm(0);
+			mt_gpufreq_set_power_limit_by_pbm(0);
 		}
 	}
 
