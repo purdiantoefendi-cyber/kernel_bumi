@@ -1,0 +1,60 @@
+name: Sync Missing Files Between Branches
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Branch asal (misal: custom-1)'
+        required: true
+        default: 'custom-1'
+      target_branch:
+        description: 'Branch tujuan (misal: custom-2)'
+        required: true
+        default: 'custom-2'
+
+jobs:
+  transfer-missing-files:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy Missing Files
+        run: |
+          SOURCE="${{ github.event.inputs.source_branch }}"
+          TARGET="${{ github.event.inputs.target_branch }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Ambil referensi remote terbaru untuk kedua branch
+          git fetch origin $SOURCE
+          git fetch origin $TARGET
+
+          # Pindah ke target branch
+          git checkout $TARGET
+
+          # Loop semua file yang ada di branch asal
+          git ls-tree -r --name-only origin/$SOURCE | while IFS= read -r file; do
+            # Cek apakah file tidak ada di branch tujuan
+            if [ ! -e "$file" ]; then
+              echo "Menyalin file baru: $file"
+              mkdir -p "$(dirname "$file")"
+              git checkout "origin/$SOURCE" -- "$file"
+            fi
+          done
+
+          # Commit dan push hanya jika ada perubahan/file baru
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "ci: transfer file baru dari branch $SOURCE ke $TARGET"
+            git push origin $TARGET
+            echo "Proses selesai: File baru berhasil ditransfer dan di-push ke branch $TARGET."
+          else
+            echo "Selesai: Tidak ada file baru yang perlu ditransfer. Semua file sudah ada."
+          fi
