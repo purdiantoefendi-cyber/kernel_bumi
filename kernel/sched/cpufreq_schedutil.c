@@ -17,6 +17,10 @@
 
 #include <linux/sched/cpufreq.h>
 #include <trace/events/power.h>
+#include <linux/suspend.h>
+#include <linux/cpu.h>
+#include <linux/workqueue.h>
+#include <linux/fb.h>
 #include "cpufreq_schedutil.h"
 
 void (*cpufreq_notifier_fp)(int cluster_id, unsigned long freq);
@@ -75,6 +79,62 @@ struct sugov_cpu {
 };
 
 static DEFINE_PER_CPU(struct sugov_cpu, sugov_cpu);
+
+/* Sensor Status Layar/Sleep */
+bool sugov_suspended = false;
+
+/* PEKERJA HOTPLUG EKSTREM: Rute Langsung */
+static void big_cluster_hotplug_work_fn(struct work_struct *work)
+{
+        int cpu;
+        
+        lock_device_hotplug();
+        
+        if (sugov_suspended) {
+                /* EKSEKUSI BUTA: Langsung tembak mati CPU 6 & 7 tanpa pengecekan online */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        cpu_down(cpu);
+                }
+        } else {
+                /* EKSEKUSI BUTA: Langsung alirkan arus ke CPU 6 & 7 */
+                for (cpu = 6; cpu <= 7; cpu++) {
+                        cpu_up(cpu);
+                }
+        }
+        
+        unlock_device_hotplug();
+}
+static DECLARE_WORK(big_cluster_hotplug_work, big_cluster_hotplug_work_fn);
+
+/* --------------------------------------------------------- */
+/* SENSOR LAYAR TUNGGAL (FRAMEBUFFER) - Tanpa Fungsi Penengah*/
+/* --------------------------------------------------------- */
+static int sugov_fb_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+        struct fb_event *event = data;
+        int *blank;
+
+        if (action != FB_EVENT_BLANK || !event || !event->data)
+                return NOTIFY_DONE;
+
+        blank = event->data;
+
+        if (*blank == FB_BLANK_POWERDOWN) {
+                /* LAYAR MATI: Set logis dan langsung masukkan antrean VIP */
+                sugov_suspended = true;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
+        } else if (*blank == FB_BLANK_UNBLANK) {
+                /* LAYAR NYALA: Set logis dan langsung bangunkan */
+                sugov_suspended = false;
+                queue_work(system_highpri_wq, &big_cluster_hotplug_work);
+        }
+        
+        return NOTIFY_OK;
+}
+
+static struct notifier_block sugov_fb_notifier = {
+        .notifier_call = sugov_fb_notify,
+};
 
 /************************ Governor internals ***********************/
 
@@ -1045,8 +1105,9 @@ static int sugov_init(struct cpufreq_policy *policy)
 		goto stop_kthread;
 	}
 
-	tunables->up_rate_limit_us = cpufreq_policy_transition_delay_us(policy);
-	tunables->down_rate_limit_us = cpufreq_policy_transition_delay_us(policy);
+	/* Paksa delay menjadi 10ms (10000 us) agar super responsif seperti Lagfree */
+	tunables->up_rate_limit_us = 10000;
+	tunables->down_rate_limit_us = 10000;
 
 	policy->governor_data = sg_policy;
 	sg_policy->tunables = tunables;
@@ -1200,7 +1261,9 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 
 static int __init sugov_register(void)
 {
-	return cpufreq_register_governor(&schedutil_gov);
+        /* Hanya daftarkan Framebuffer*/
+        fb_register_client(&sugov_fb_notifier); 
+        return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
 
