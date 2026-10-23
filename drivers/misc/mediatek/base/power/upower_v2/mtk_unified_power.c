@@ -340,8 +340,7 @@ static void upower_init_rownum(void)
 static unsigned int eem_is_enabled(void)
 {
 /* #ifndef EARLY_PORTING_EEM */
-	// return mt_eem_is_enabled();
-	return 0;
+	return mt_eem_is_enabled();
 }
 
 static void upower_wait_for_eem_volt_done(void)

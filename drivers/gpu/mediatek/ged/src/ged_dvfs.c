@@ -626,14 +626,8 @@ bool ged_dvfs_gpu_freq_commit(unsigned long ui32NewFreqID,
 		if (ui32NewFreqID != ui32CurFreqID) {
 			/* call to DVFS module */
 			g_ged_dvfs_commit_idx = ui32NewFreqID;
-			
-			// BYPASS: Matikan pengiriman perintah dari GED ke hardware GPU
-			// ged_dvfs_gpu_freq_commit_fp(ui32NewFreqID, eCommitType,
-			//	&bCommited);
-			
-			// FAKE SUCCESS: Beri tahu GED bahwa perubahan seolah-olah sukses agar tidak error
-			bCommited = true; 
-			
+			ged_dvfs_gpu_freq_commit_fp(ui32NewFreqID, eCommitType,
+				&bCommited);
 			/*
 			 * To-Do: refine previous freq contributions,
 			 * since it is possible to have multiple freq settings
@@ -2410,3 +2404,4 @@ module_param(gpu_cust_upbound_freq, uint, 0644);
 module_param(g_gpu_timer_based_emu, uint, 0644);
 module_param(gpu_bw_err_debug, uint, 0644);
 #endif
+

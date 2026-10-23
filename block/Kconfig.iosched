@@ -14,7 +14,7 @@ config IOSCHED_NOOP
 	  the kernel.
 
 config IOSCHED_DEADLINE
-	bool "Deadline I/O scheduler"
+	tristate "Deadline I/O scheduler"
 	default y
 	---help---
 	  The deadline I/O scheduler is simple and compact. It will provide
@@ -41,67 +41,54 @@ config CFQ_GROUP_IOSCHED
 	  Enable group IO scheduling in CFQ.
 
 config IOSCHED_ZEN
-        bool "Zen I/O scheduler (MQ Edition)"
-        default y
-        ---help---
-          Zen IO scheduler ported to Multi-Queue (blk-mq) architecture.
-          FCFS, dispatches are back-inserted, deadlines ensure fairness.
-          Synchronous requests have priority over asynchronous.
+	tristate "Zen I/O scheduler"
+	default y
+	---help---
+	  FCFS, dispatches are back-inserted, deadlines ensure fairness.
+	  Should work best with devices where there is no travel delay.
 
 config IOSCHED_GAMER
-    bool "Gamer I/O scheduler"
+    tristate "Gamer I/O scheduler"
     default y
 
 config IOSCHED_PERFORMANCE
-    bool "Performance I/O scheduler"
+    tristate "Performance I/O scheduler"
     default y
 
 
 choice
-        prompt "Default I/O scheduler"
-        default DEFAULT_GAMER
-        help
-          Select the I/O scheduler which will be used by default for all
-          block devices.
-		  
-		  config DEFAULT_GAMER
-                bool "gamer" if IOSCHED_GAMER=y
 
-        config DEFAULT_PERFORMANCE
-                bool "performance" if IOSCHED_PERFORMANCE=y
+	prompt "Default I/O scheduler"
+	default DEFAULT_CFQ
+	help
+	  Select the I/O scheduler which will be used by default for all
+	  block devices.
 
-        config DEFAULT_ZEN
-                bool "zen" if IOSCHED_ZEN=y
+	config DEFAULT_DEADLINE
+		bool "Deadline" if IOSCHED_DEADLINE=y
 
-        config DEFAULT_DEADLINE
-                bool "Deadline" if IOSCHED_DEADLINE=y
+	config DEFAULT_CFQ
+		bool "CFQ" if IOSCHED_CFQ=y
 
-        config DEFAULT_CFQ
-                bool "CFQ" if IOSCHED_CFQ=y
-
-        config DEFAULT_NOOP
-                bool "No-op"
+	config DEFAULT_NOOP
+		bool "No-op"
 
 endchoice
 
 config DEFAULT_IOSCHED
-        string
-		default "gamer" if DEFAULT_GAMER
-        default "performance" if DEFAULT_PERFORMANCE
-        default "zen" if DEFAULT_ZEN
-        default "deadline" if DEFAULT_DEADLINE
-        default "cfq" if DEFAULT_CFQ
-        default "noop" if DEFAULT_NOOP
-
+	string
+	default "deadline" if DEFAULT_DEADLINE
+	default "cfq" if DEFAULT_CFQ
+	default "noop" if DEFAULT_NOOP
 
 config MQ_IOSCHED_DEADLINE
-	bool "MQ deadline I/O scheduler"
+	tristate "MQ deadline I/O scheduler"
 	default y
 	---help---
 	  MQ version of the deadline IO scheduler.
 
 config MQ_IOSCHED_KYBER
-	bool "Kyber I/O scheduler"
+	tristate "Kyber I/O scheduler"
 	default y
 	---help---
 	  The Kyber I/O scheduler is a low-overhead scheduler suitable for
@@ -110,7 +97,7 @@ config MQ_IOSCHED_KYBER
 	  goal.
 
 config IOSCHED_BFQ
-	bool "BFQ I/O scheduler"
+	tristate "BFQ I/O scheduler"
 	default n
 	---help---
 	BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
