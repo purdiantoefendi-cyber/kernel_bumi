@@ -495,11 +495,6 @@ CONFIG_EROFS_FS=y
 # C3T code for HQ-218723 by liaodengchuan at 2022/09/06 start
 CONFIG_MTK_SECURITY_SW_SUPPORT=y
 # C3T code for HQ-218723 by liaodengchuan at 2022/09/06 end
-# C3T code for HQ-218639 by huitianpu at 2022/8/21 end
-# C3T code for HQ-219022 by jiangyue at 2022/08/22 start
-CONFIG_MI_ERRFLAG_ESD_CHECK_ENABLE=y
-# C3T code for HQ-219022 by jiangyue at 2022/08/22 end
-CONFIG_EROFS_FS=y
 # C3T code for HQ-223831 by wangmingyu at 2022/09/09 start
 CONFIG_DEBUG_POLICY=y
 # C3T code for HQ-223831 by wangmingyu at 2022/09/09 end
@@ -680,5 +675,4 @@ CONFIG_NET_SCH_FQ=y
 CONFIG_DEFAULT_FQ=y
 CONFIG_NO_HZ_IDLE=y
 CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
-CONFIG_ZRAM_WRITEBACK=y
 CONFIG_FAKE_UNAME_6_12=y
