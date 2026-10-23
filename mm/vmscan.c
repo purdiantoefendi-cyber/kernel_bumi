@@ -461,7 +461,7 @@ void unregister_shrinker(struct shrinker *shrinker)
 }
 EXPORT_SYMBOL(unregister_shrinker);
 
-#define SHRINK_BATCH 256
+#define SHRINK_BATCH 128
 
 static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 				    struct shrinker *shrinker, int priority)
@@ -2282,7 +2282,7 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 
 #ifdef CONFIG_MTK_GMO_RAM_OPTIMIZE
 /* threshold of swapin and out */
-static unsigned int swpinout_threshold = 2400;
+static unsigned int swpinout_threshold = 12000;
 module_param_named(threshold, swpinout_threshold, uint, 0644);
 static bool swap_is_allowed(void)
 {
@@ -2552,7 +2552,7 @@ out:
  * For low-ram device, this value is suggested to be higher than 4 to keep away
  * from above situation while we have smaller sc->priority.
  */
-static int scan_anon_priority = 6;
+static int scan_anon_priority = 4;
 module_param_named(scan_anon_prio, scan_anon_priority, int, 0644);
 #endif
 #ifdef CONFIG_LRU_GEN
