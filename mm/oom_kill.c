@@ -43,6 +43,14 @@
 #include <linux/mmu_notifier.h>
 #include <linux/cred.h>
 
+#ifdef CONFIG_MTK_ION
+#include "mtk/ion_drv.h"
+#endif
+
+#if IS_ENABLED(CONFIG_MTK_GPU_SUPPORT)
+#include <mt-plat/mtk_gpu_utility.h>
+#endif
+
 #include <asm/tlb.h>
 #include "internal.h"
 #include "slab.h"
@@ -233,8 +241,18 @@ unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,
 	 * The baseline for the badness score is the proportion of RAM that each
 	 * task's rss, pagetable and swap space use.
 	 */
-	points = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS) +
-		mm_pgtables_bytes(p->mm) / PAGE_SIZE;
+	/*
+	 * HACK EXTREME MULTITasking:
+	 * Hapus kalkulasi get_mm_counter(p->mm, MM_SWAPENTS) dari skor.
+	 * Biarkan aplikasi yang berhasil dikompresi ke zRAM (swap) 
+	 * memiliki skor yang sangat kecil agar tidak dibunuh!
+	 *
+	 * KODE ASLI:
+	 * points = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS) +
+	 *	mm_pgtables_bytes(p->mm) / PAGE_SIZE;[span_3](start_span)[span_3](end_span)
+	 */
+	points = get_mm_rss(p->mm) + (mm_pgtables_bytes(p->mm) / PAGE_SIZE);
+
 	task_unlock(p);
 
 	/* Normalize to oom_score_adj units */
@@ -431,6 +449,18 @@ static void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 	rcu_read_unlock();
 }
 
+/* dump extra info: HW memory usage */
+static void oom_dump_extra_info(void)
+{
+#ifdef CONFIG_MTK_ION
+	ion_mm_heap_memory_detail();
+#endif
+#if IS_ENABLED(CONFIG_MTK_GPU_SUPPORT)
+	if (mtk_dump_gpu_memory_usage() == false)
+		pr_info("mtk_dump_gpu_memory_usage not support\n");
+#endif
+}
+
 static void dump_header(struct oom_control *oc, struct task_struct *p)
 {
 	pr_warn("%s invoked oom-killer: gfp_mask=%#x(%pGg), nodemask=%*pbl, order=%d, oom_score_adj=%hd\n",
@@ -451,6 +481,8 @@ static void dump_header(struct oom_control *oc, struct task_struct *p)
 	}
 	if (sysctl_oom_dump_tasks)
 		dump_tasks(oc->memcg, oc->nodemask);
+
+	oom_dump_extra_info();
 }
 
 /*
@@ -519,21 +551,19 @@ bool __oom_reap_task_mm(struct mm_struct *mm)
 		 * count elevated without a good reason.
 		 */
 		if (vma_is_anonymous(vma) || !(vma->vm_flags & VM_SHARED)) {
-			struct mmu_notifier_range range;
+			const unsigned long start = vma->vm_start;
+			const unsigned long end = vma->vm_end;
 			struct mmu_gather tlb;
 
-			mmu_notifier_range_init(&range, MMU_NOTIFY_UNMAP, 0,
-						vma, mm, vma->vm_start,
-						vma->vm_end);
-			tlb_gather_mmu(&tlb, mm, range.start, range.end);
-			if (mmu_notifier_invalidate_range_start_nonblock(&range)) {
-				tlb_finish_mmu(&tlb, range.start, range.end);
+			tlb_gather_mmu(&tlb, mm, start, end);
+			if (mmu_notifier_invalidate_range_start_nonblock(mm, start, end)) {
+				tlb_finish_mmu(&tlb, start, end);
 				ret = false;
 				continue;
 			}
-			unmap_page_range(&tlb, vma, range.start, range.end, NULL);
-			mmu_notifier_invalidate_range_end(&range);
-			tlb_finish_mmu(&tlb, range.start, range.end);
+			unmap_page_range(&tlb, vma, start, end, NULL);
+			mmu_notifier_invalidate_range_end(mm, start, end);
+			tlb_finish_mmu(&tlb, start, end);
 		}
 	}
 
@@ -1074,6 +1104,11 @@ bool out_of_memory(struct oom_control *oc)
 
 	if (oom_killer_disabled)
 		return false;
+	
+	if (is_memcg_oom(oc)) {
+		pr_warn("Extreme Multitasking: Mengabaikan limitasi Memcg OOM!\n");
+		return true; /* Berbohong kepada kernel bahwa OOM sudah ditangani */
+	}
 
 	if (!is_memcg_oom(oc)) {
 		blocking_notifier_call_chain(&oom_notify_list, 0, &freed);

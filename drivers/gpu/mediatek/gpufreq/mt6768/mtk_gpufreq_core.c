@@ -2010,10 +2010,10 @@ static void __mt_gpufreq_bucks_enable(void)
 	aee_rr_rec_gpu_dvfs_status(0x10 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
 #endif
 
-	if (regulator_is_enabled(g_pmic->reg_vgpu) == 0) {
-		ret = regulator_enable(g_pmic->reg_vgpu);
+	if (regulator_is_enabled(g_pmic->reg_vsram_gpu) == 0) {
+		ret = regulator_enable(g_pmic->reg_vsram_gpu);
 		if (ret) {
-			gpufreq_pr_err("@%s: enable VGPU failed, ret = %d\n", __func__, ret);
+			gpufreq_pr_err("@%s: enable VSRAM_GPU failed, ret = %d\n", __func__, ret);
 			return;
 		}
 	}
@@ -2022,10 +2022,10 @@ static void __mt_gpufreq_bucks_enable(void)
 	aee_rr_rec_gpu_dvfs_status(0x20 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
 #endif
 
-	if (regulator_is_enabled(g_pmic->reg_vsram_gpu) == 0) {
-		ret = regulator_enable(g_pmic->reg_vsram_gpu);
+	if (regulator_is_enabled(g_pmic->reg_vgpu) == 0) {
+		ret = regulator_enable(g_pmic->reg_vgpu);
 		if (ret) {
-			gpufreq_pr_err("@%s: enable VSRAM_GPU failed, ret = %d\n", __func__, ret);
+			gpufreq_pr_err("@%s: enable VGPU failed, ret = %d\n", __func__, ret);
 			return;
 		}
 	}
@@ -2048,10 +2048,10 @@ static void __mt_gpufreq_bucks_disable(void)
 	aee_rr_rec_gpu_dvfs_status(0x40 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
 #endif
 
-	if (regulator_is_enabled(g_pmic->reg_vsram_gpu) > 0) {
-		ret = regulator_disable(g_pmic->reg_vsram_gpu);
+	if (regulator_is_enabled(g_pmic->reg_vgpu) > 0) {
+		ret = regulator_disable(g_pmic->reg_vgpu);
 		if (ret) {
-			gpufreq_pr_err("@%s: disable VSRAM_GPU failed, ret = %d\n", __func__, ret);
+			gpufreq_pr_err("@%s: disable VGPU failed, ret = %d\n", __func__, ret);
 			return;
 		}
 	}
@@ -2060,10 +2060,10 @@ static void __mt_gpufreq_bucks_disable(void)
 	aee_rr_rec_gpu_dvfs_status(0x50 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
 #endif
 
-	if (regulator_is_enabled(g_pmic->reg_vgpu) > 0) {
-		ret = regulator_disable(g_pmic->reg_vgpu);
+	if (regulator_is_enabled(g_pmic->reg_vsram_gpu) > 0) {
+		ret = regulator_disable(g_pmic->reg_vsram_gpu);
 		if (ret) {
-			gpufreq_pr_err("@%s: disable VGPU failed, ret = %d\n", __func__, ret);
+			gpufreq_pr_err("@%s: disable VSRAM_GPU failed, ret = %d\n", __func__, ret);
 			return;
 		}
 	}
@@ -2586,7 +2586,7 @@ static void __mt_gpufreq_setup_opp_table(struct g_opp_table_info *freqs, int num
 	if (g_segment_id == MT6767_SEGMENT)
 		g_segment_max_opp_idx = 15;
 	else if (g_segment_id == MT6769T_SEGMENT)
-		g_segment_max_opp_idx = 2;
+		g_segment_max_opp_idx = 0;
 	else if (g_segment_id == MT6769Z_SEGMENT)
 		g_segment_max_opp_idx = 0;
 	else
@@ -3045,3 +3045,14 @@ module_exit(__mt_gpufreq_exit);
 MODULE_DEVICE_TABLE(of, g_gpufreq_of_match);
 MODULE_DESCRIPTION("MediaTek GPU-DVFS driver");
 MODULE_LICENSE("GPL");
+
+/* DUMMY FIX FOR THERMAL OFF */
+int get_immediate_gpu_wrap(void)
+{
+    return 0; 
+}
+
+int mtk_gpufreq_register(struct mt_gpufreq_power_table_info *freqs, int num)
+{
+    return 0;
+}

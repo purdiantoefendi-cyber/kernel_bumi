@@ -169,7 +169,7 @@ struct scan_control {
 #endif
 
 /*
- * From 0 .. 100.  Higher means more swappy.
+ * From 0 .. 200.  Higher means more swappy.
  */
 int vm_swappiness = 200;
 /*
@@ -461,7 +461,7 @@ void unregister_shrinker(struct shrinker *shrinker)
 }
 EXPORT_SYMBOL(unregister_shrinker);
 
-#define SHRINK_BATCH 128
+#define SHRINK_BATCH 256
 
 static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 				    struct shrinker *shrinker, int priority)
@@ -492,9 +492,18 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 	nr = atomic_long_xchg(&shrinker->nr_deferred[nid], 0);
 
 	total_scan = nr;
-	delta = freeable >> priority;
-	delta *= 4;
-	do_div(delta, shrinker->seeks);
+	if (shrinker->seeks) {
+		delta = freeable >> priority;
+		delta *= 4;
+		do_div(delta, shrinker->seeks);
+	} else {
+		/*
+		 * These objects don't require any IO to create. Trim
+		 * them aggressively under memory pressure to keep
+		 * them from causing refetches in the IO caches.
+		 */
+		delta = freeable / 2;
+	}
 
 	total_scan += delta;
 	if (total_scan < 0) {
@@ -2273,7 +2282,7 @@ static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 
 #ifdef CONFIG_MTK_GMO_RAM_OPTIMIZE
 /* threshold of swapin and out */
-static unsigned int swpinout_threshold = 12000;
+static unsigned int swpinout_threshold = 2400;
 module_param_named(threshold, swpinout_threshold, uint, 0644);
 static bool swap_is_allowed(void)
 {
@@ -2543,7 +2552,7 @@ out:
  * For low-ram device, this value is suggested to be higher than 4 to keep away
  * from above situation while we have smaller sc->priority.
  */
-static int scan_anon_priority = 4;
+static int scan_anon_priority = 6;
 module_param_named(scan_anon_prio, scan_anon_priority, int, 0644);
 #endif
 #ifdef CONFIG_LRU_GEN
