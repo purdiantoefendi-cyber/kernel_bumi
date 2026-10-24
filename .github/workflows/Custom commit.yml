@@ -16,7 +16,7 @@ on:
         description: 'URL Repository Eksternal'
         required: true
         type: string
-        default: 'https://github.com/purdiantoefendi-cyber/AbrezzPjkt_Earth.git'
+        default: 'https://github.com/purdiantoefendi-cyber/kernel_bumi.git'
       external_branch:
         description: 'Branch di Repo Eksternal yang ingin diambil'
         required: true
@@ -100,13 +100,12 @@ jobs:
             git checkout -b "$TARGET_BRANCH"
           fi
 
-          # LOGIKA PEMILIHAN COMMIT
+          # LOGIKA PEMILIHAN COMMIT (Ditambahkan --committer-date-order untuk presisi urutan)
           if [ -n "$FETCH_COUNT" ] && [ "$FETCH_COUNT" -gt 0 ]; then
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE JUMLAH (Mengambil $FETCH_COUNT commit terakhir)"
             echo "========================================"
-            # Menggunakan -n untuk mengambil X commit paling atas, lalu --reverse agar urutannya benar saat dicommit
-            COMMIT_LIST=$(git log -n "$FETCH_COUNT" --reverse --format="%H" FETCH_HEAD)
+            COMMIT_LIST=$(git log -n "$FETCH_COUNT" --committer-date-order --reverse --format="%H" FETCH_HEAD)
             read -r -a COMMITS <<< "$COMMIT_LIST"
             
           elif [ -n "$COMMITS_INPUT" ]; then
@@ -124,7 +123,7 @@ jobs:
               GIT_UNTIL_ARG=""
             fi
             echo "========================================"
-            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --reverse --format="%H" FETCH_HEAD)
+            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --committer-date-order --reverse --format="%H" FETCH_HEAD)
             read -r -a COMMITS <<< "$COMMIT_LIST"
           fi
 
@@ -145,13 +144,21 @@ jobs:
               echo "Menerapkan commit: $commit"
               
               if git cherry-pick --strategy=recursive -X theirs --allow-empty --keep-redundant-commits "$commit"; then
+                
+                # Ekstrak tanggal committer asli secara spesifik (%cI)
+                ORIGINAL_COMMITTER_DATE=$(git log -1 --format="%cI" "$commit")
+                
                 if [ -n "$RETRO_DAYS" ] && [ "$RETRO_DAYS" -gt 0 ]; then
-                  PAST_DATE=$(date -d "$RETRO_DAYS days ago + $TIME_OFFSET minutes" --iso-8601=seconds)
+                  # Kalkulasi retro diambil dari tanggal committer asli, bukan tanggal hari ini
+                  PAST_DATE=$(date -d "$ORIGINAL_COMMITTER_DATE - $RETRO_DAYS days + $TIME_OFFSET minutes" --iso-8601=seconds)
                   GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
                   echo "✅ BERHASIL (Mundur ke: $PAST_DATE)"
                 else
-                  echo "✅ BERHASIL (Tanggal asli dipertahankan)"
+                  # Timpa author date dan committer date menggunakan committer date asli
+                  GIT_AUTHOR_DATE="$ORIGINAL_COMMITTER_DATE" GIT_COMMITTER_DATE="$ORIGINAL_COMMITTER_DATE" git commit --amend --no-edit --date="$ORIGINAL_COMMITTER_DATE"
+                  echo "✅ BERHASIL (Menggunakan Committer Date asli: $ORIGINAL_COMMITTER_DATE)"
                 fi
+                
                 SUCCESS_COMMITS+=("$commit")
                 TIME_OFFSET=$((TIME_OFFSET + 1))
               else
