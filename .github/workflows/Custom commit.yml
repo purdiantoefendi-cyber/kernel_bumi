@@ -16,7 +16,7 @@ on:
         description: 'URL Repository Eksternal'
         required: true
         type: string
-        default: 'https://github.com/purdiantoefendi-cyber/AbrezzPjkt_Earth.git'
+        default: 'https://github.com/purdiantoefendi-cyber/kernel_bumi.git'
       external_branch:
         description: 'Branch di Repo Eksternal yang ingin diambil'
         required: true
