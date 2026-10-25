@@ -59,40 +59,43 @@ jobs:
           git fetch "$SOURCE_URL" "$SOURCE_BRANCH"
 
           # 3. Logika Merge & Paksa Resolve
+          set +e # Matikan fitur auto-stop agar error saat bentrok tidak mematikan workflow
+          
           if [[ "$STRATEGY" == *"theirs"* ]]; then
             echo "Strategi: THEIRS (PAKSA PAKAI FILE SUMBER EKSTERNAL)"
             
-            # Coba merge normal dengan preferensi theirs
-            git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH (Theirs)" || {
+            if ! git merge FETCH_HEAD --allow-unrelated-histories -X theirs -m "Auto-merge: $SOURCE_BRANCH (Theirs)"; then
               echo "Terdeteksi konflik berat! Memaksa resolve dengan THEIRS..."
               
-              # Cari semua file bentrok (U) dan paksa checkout versi theirs
-              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --theirs {}
+              # Tangani file bentrok teks maupun struktural (file hilang/dihapus)
+              git diff --name-only --diff-filter=U | while read file; do
+                git checkout --theirs "$file" 2>/dev/null || git rm "$file" 2>/dev/null || true
+              done
               
-              # Tambahkan perubahan dan paksa commit
               git add .
-              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi THEIRS"
-            }
+              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi THEIRS" || true
+            fi
             
           elif [[ "$STRATEGY" == *"ours"* ]]; then
             echo "Strategi: OURS (PAKSA PAKAI FILE REPO KAMU)"
             
-            # Coba merge normal dengan preferensi ours
-            git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH (Ours)" || {
+            if ! git merge FETCH_HEAD --allow-unrelated-histories -X ours -m "Auto-merge: $SOURCE_BRANCH (Ours)"; then
               echo "Terdeteksi konflik berat! Memaksa resolve dengan OURS..."
               
-              # Cari semua file bentrok (U) dan paksa checkout versi ours
-              git diff --name-only --diff-filter=U | xargs -r -I {} git checkout --ours {}
+              git diff --name-only --diff-filter=U | while read file; do
+                git checkout --ours "$file" 2>/dev/null || git rm "$file" 2>/dev/null || true
+              done
               
-              # Tambahkan perubahan dan paksa commit
               git add .
-              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi OURS"
-            }
+              git commit -m "Auto-merge (Forced): Menyelesaikan konflik berat dengan versi OURS" || true
+            fi
             
           else
             echo "Strategi: NORMAL (Error jika bentrok)"
             git merge FETCH_HEAD --allow-unrelated-histories -m "Auto-merge: $SOURCE_BRANCH ke $TARGET"
           fi
+          
+          set -e # Aktifkan kembali auto-stop untuk tahapan push
           
           # 4. Push hasil akhirnya ke repository kamu
           git push origin "$TARGET"
