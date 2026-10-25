@@ -15,8 +15,8 @@ on:
       branch:
         description: 'Branch'
         required: true
-      defconfig:
-        description: 'Defconfig'
+      defconfigs:
+        description: 'Daftar Defconfig (pisahkan dengan koma, cnth: earth_defconfig, moon_defconfig)'
         required: true
         default: 'earth_defconfig'
       kernelsu_url:
@@ -29,8 +29,30 @@ on:
         default: ''
 
 jobs:
+  # Job baru untuk mem-parsing input string koma menjadi array JSON
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Generate Matrix
+        id: set-matrix
+        run: |
+          import json, os
+          # Memisahkan input berdasarkan koma dan menghapus spasi berlebih
+          configs = [c.strip() for c in "${{ github.event.inputs.defconfigs }}".split(',')]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(configs)}\n")
+        shell: python
+
   build:
+    needs: setup-matrix
     runs-on: ${{ github.event.inputs.runner }}
+    strategy:
+      fail-fast: false # Agar gagal di satu defconfig tidak menghentikan defconfig lain
+      matrix:
+        defconfig: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -41,7 +63,6 @@ jobs:
     - name: Set Variables
       run: |
         echo "BUILD_TIME=$(date +'%H%M-%d%m%y')" >> $GITHUB_ENV
-        # Menambahkan LLVM=1 dan LLVM_IAS=1 secara default ke ARGS
         echo "ARGS=ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_USER=DianTk_Modz KBUILD_BUILD_HOST=GitHub-Actions CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
 
     - name: Install Dependencies
@@ -50,26 +71,22 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
 
-    # MENGGUNAKAN ZYC-CLANG (MIRROR CLANGSANTONI)
     - name: Setup ZyC-Clang
       run: |
         git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
-    # SETUP KERNELSU DENGAN KONDISI (BISA DILEWATI)
     - name: Setup KernelSU
       if: github.event.inputs.kernelsu_url != ''
       run: |
         curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
 
-    - name: Generate Defconfig
+    - name: Generate Defconfig (${{ matrix.defconfig }})
       run: |
-        make O=out $ARGS ${{ github.event.inputs.defconfig }}
+        make O=out $ARGS ${{ matrix.defconfig }}
 
-    # KOMPILASI DENGAN FLAG -O3, POLLY, DAN CORTEX OPTIMIZATION
     - name: Compile Kernel
       run: |
-        # Injeksi -O3 dan instruksi khusus MT6768 (Cortex-A75 & A55) via KCFLAGS
         make O=out -j$(nproc) $ARGS \
           KCFLAGS="-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55" || \
         make O=out -j1 $ARGS KCFLAGS="-O3 -Wno-error"
@@ -77,17 +94,18 @@ jobs:
     - name: Check Build Output
       run: |
         if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-          echo "Error: Image.gz-dtb tidak ditemukan. Build kernel gagal."
+          echo "Error: Image.gz-dtb tidak ditemukan. Build kernel gagal untuk ${{ matrix.defconfig }}."
           exit 1
         else
-          echo "Kernel berhasil di-build dengan Optimasi Maksimal."
+          echo "Kernel ${{ matrix.defconfig }} berhasil di-build."
         fi
 
     - name: Upload Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: Build-Result-${{ env.BUILD_TIME }}-EXTREME
+        # Menambahkan nama defconfig di file hasil upload agar tidak saling tumpuk
+        name: Build-Result-${{ matrix.defconfig }}-${{ env.BUILD_TIME }}-EXTREME
         path: |
           out/arch/arm64/boot/Image.gz*
           out/arch/arm64/boot/dts/**/*.dtb
