@@ -91,8 +91,10 @@ jobs:
           echo "Mempersiapkan repository eksternal..."
           git remote remove custom_repo 2>/dev/null || true
           git remote add custom_repo "$EXTERNAL_REPO"
-          git fetch custom_repo "$EXTERNAL_BRANCH"
+          
+          # PERBAIKAN: Fetch origin lebih dulu, lalu fetch branch eksternal ke path spesifik
           git fetch origin
+          git fetch custom_repo "$EXTERNAL_BRANCH":refs/remotes/custom_repo/"$EXTERNAL_BRANCH"
 
           if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
             git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
@@ -100,12 +102,13 @@ jobs:
             git checkout -b "$TARGET_BRANCH"
           fi
 
-          # LOGIKA PEMILIHAN COMMIT (Ditambahkan --date-order untuk presisi urutan committer)
+          # LOGIKA PEMILIHAN COMMIT
           if [ -n "$FETCH_COUNT" ] && [ "$FETCH_COUNT" -gt 0 ]; then
             echo "========================================"
             echo "🔍 MENGGUNAKAN MODE JUMLAH (Mengambil $FETCH_COUNT commit terakhir)"
             echo "========================================"
-            COMMIT_LIST=$(git log -n "$FETCH_COUNT" --date-order --reverse --format="%H" FETCH_HEAD)
+            # PERBAIKAN: Membaca langsung dari refs custom_repo, bukan FETCH_HEAD
+            COMMIT_LIST=$(git log -n "$FETCH_COUNT" --date-order --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
             read -r -a COMMITS <<< "$COMMIT_LIST"
             
           elif [ -n "$COMMITS_INPUT" ]; then
@@ -116,19 +119,20 @@ jobs:
             
           elif [ -n "$FETCH_SINCE" ]; then
             echo "========================================"
-            echo "🔍 MENGGUNAKAN MODE TANGGAL"
+            echo "🔍 MENGGUNAKAN MODE TANGGAL (Filter by Committer Date)"
             if [ -n "$FETCH_UNTIL" ]; then
               GIT_UNTIL_ARG="--until=${FETCH_UNTIL}T23:59:59"
             else
               GIT_UNTIL_ARG=""
             fi
             echo "========================================"
-            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --date-order --reverse --format="%H" FETCH_HEAD)
+            # PERBAIKAN: Membaca langsung dari refs custom_repo
+            COMMIT_LIST=$(git log --since="$FETCH_SINCE" $GIT_UNTIL_ARG --date-order --reverse --format="%H" custom_repo/"$EXTERNAL_BRANCH")
             read -r -a COMMITS <<< "$COMMIT_LIST"
           fi
 
           if [ ${#COMMITS[@]} -eq 0 ] || [ -z "${COMMITS[0]}" ]; then
-            echo "❌ Tidak ada commit yang ditemukan. Coba gunakan Mode Jumlah (fetch_count)."
+            echo "❌ Tidak ada commit yang ditemukan. Pastikan tanggal/parameter sudah benar."
             exit 0
           fi
           
@@ -149,7 +153,7 @@ jobs:
                 ORIGINAL_COMMITTER_DATE=$(git log -1 --format="%cI" "$commit")
                 
                 if [ -n "$RETRO_DAYS" ] && [ "$RETRO_DAYS" -gt 0 ]; then
-                  # Kalkulasi retro diambil dari tanggal committer asli, bukan tanggal hari ini
+                  # Kalkulasi retro diambil dari tanggal committer asli
                   PAST_DATE=$(date -d "$ORIGINAL_COMMITTER_DATE - $RETRO_DAYS days + $TIME_OFFSET minutes" --iso-8601=seconds)
                   GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
                   echo "✅ BERHASIL (Mundur ke: $PAST_DATE)"
