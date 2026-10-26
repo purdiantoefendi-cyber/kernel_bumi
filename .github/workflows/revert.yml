@@ -26,6 +26,7 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0 # Penting: Mengambil seluruh history agar git mengenali commit hash
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Configure Git
         run: |
