@@ -83,28 +83,18 @@ jobs:
 
     - name: Generate Defconfig (${{ matrix.defconfig }})
       run: |
-        # Bersihkan source dan folder out dari residu build sebelumnya
-        make mrproper
-        make O=out $ARGS mrproper
         make O=out $ARGS ${{ matrix.defconfig }}
-
-    - name: Prepare Architecture Headers
-      run: |
-        # Generate symlink dan header secara sekuensial untuk mencegah error "asm-generic/pgtable.h"
-        make O=out $ARGS prepare
 
     - name: Compile Kernel
       run: |
-        # Eksekusi build paralel setelah prepare selesai
-        make O=out -j$(nproc --all) $ARGS \
+        make O=out -j$(nproc) $ARGS \
           KCFLAGS="-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55" || \
         make O=out -j1 $ARGS KCFLAGS="-O3 -Wno-error"
 
     - name: Check Build Output
       run: |
-        # Cek Image.gz-dtb atau Image.gz untuk kompatibilitas yang lebih baik
-        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ] && [ ! -f out/arch/arm64/boot/Image.gz ]; then
-          echo "Error: Image.gz-dtb / Image.gz tidak ditemukan. Build gagal untuk ${{ matrix.defconfig }}."
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "Error: Image.gz-dtb tidak ditemukan. Build kernel gagal untuk ${{ matrix.defconfig }}."
           exit 1
         else
           echo "Kernel ${{ matrix.defconfig }} berhasil di-build."
@@ -114,9 +104,10 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
+        # Menambahkan nama defconfig di file hasil upload agar tidak saling tumpuk
         name: Build-Result-${{ matrix.defconfig }}-${{ env.BUILD_TIME }}-EXTREME
         path: |
-          out/arch/arm64/boot/Image*
+          out/arch/arm64/boot/Image.gz*
           out/arch/arm64/boot/dts/**/*.dtb
           out/arch/arm64/boot/dts/**/*.gz
           out/arch/arm64/boot/dts/**/*.gz-dtb
