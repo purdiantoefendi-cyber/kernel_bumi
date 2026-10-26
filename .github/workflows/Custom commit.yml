@@ -155,11 +155,11 @@ jobs:
                 if [ -n "$RETRO_DAYS" ] && [ "$RETRO_DAYS" -gt 0 ]; then
                   # Kalkulasi retro diambil dari tanggal committer asli
                   PAST_DATE=$(date -d "$ORIGINAL_COMMITTER_DATE - $RETRO_DAYS days + $TIME_OFFSET minutes" --iso-8601=seconds)
-                  GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --date="$PAST_DATE"
+                  GIT_AUTHOR_DATE="$PAST_DATE" GIT_COMMITTER_DATE="$PAST_DATE" git commit --amend --no-edit --allow-empty --date="$PAST_DATE"
                   echo "✅ BERHASIL (Mundur ke: $PAST_DATE)"
                 else
                   # Timpa author date dan committer date menggunakan committer date asli
-                  GIT_AUTHOR_DATE="$ORIGINAL_COMMITTER_DATE" GIT_COMMITTER_DATE="$ORIGINAL_COMMITTER_DATE" git commit --amend --no-edit --date="$ORIGINAL_COMMITTER_DATE"
+                  GIT_AUTHOR_DATE="$ORIGINAL_COMMITTER_DATE" GIT_COMMITTER_DATE="$ORIGINAL_COMMITTER_DATE" git commit --amend --no-edit --allow-empty --date="$ORIGINAL_COMMITTER_DATE"
                   echo "✅ BERHASIL (Menggunakan Committer Date asli: $ORIGINAL_COMMITTER_DATE)"
                 fi
                 
