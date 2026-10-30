@@ -2379,6 +2379,7 @@ static void cgroup_migrate_add_task(struct task_struct *task,
 
 	mgctx->tset.nr_tasks++;
 
+	css_set_skip_task_iters(cset, task);
 	list_move_tail(&task->cg_list, &cset->mg_tasks);
 	if (list_empty(&cset->mg_node))
 		list_add_tail(&cset->mg_node,
@@ -6000,19 +6001,16 @@ void cgroup_fork(struct task_struct *child)
 
 /**
  * cgroup_can_fork - called on a new task before the process is exposed
- * @child: the child process
+ * @child: the task in question.
  *
- * This calls the subsystem can_fork() callbacks. If the cgroup_can_fork()
- * callback returns an error, the fork aborts with that error code. This
- * allows for a cgroup subsystem to conditionally allow or deny new forks.
+ * This calls the subsystem can_fork() callbacks. If the can_fork() callback
+ * returns an error, the fork aborts with that error code. This allows for
+ * a cgroup subsystem to conditionally allow or deny new forks.
  */
 int cgroup_can_fork(struct task_struct *child)
-	__acquires(&cgroup_threadgroup_rwsem) __releases(&cgroup_threadgroup_rwsem)
 {
 	struct cgroup_subsys *ss;
 	int i, j, ret;
-
-	cgroup_threadgroup_change_begin(current);
 
 	do_each_subsys_mask(ss, i, have_canfork_callback) {
 		ret = ss->can_fork(child);
@@ -6030,20 +6028,17 @@ out_revert:
 			ss->cancel_fork(child);
 	}
 
-	cgroup_threadgroup_change_end(current);
-
 	return ret;
 }
 
 /**
-  * cgroup_cancel_fork - called if a fork failed after cgroup_can_fork()
-  * @child: the child process
-  *
-  * This calls the cancel_fork() callbacks if a fork failed *after*
-  * cgroup_can_fork() succeded.
-  */
+ * cgroup_cancel_fork - called if a fork failed after cgroup_can_fork()
+ * @child: the task in question
+ *
+ * This calls the cancel_fork() callbacks if a fork failed *after*
+ * cgroup_can_fork() succeded.
+ */
 void cgroup_cancel_fork(struct task_struct *child)
-	__releases(&cgroup_threadgroup_rwsem)
 {
 	struct cgroup_subsys *ss;
 	int i;
@@ -6051,19 +6046,19 @@ void cgroup_cancel_fork(struct task_struct *child)
 	for_each_subsys(ss, i)
 		if (ss->cancel_fork)
 			ss->cancel_fork(child);
-
-	cgroup_threadgroup_change_end(current);
 }
 
 /**
- * cgroup_post_fork - finalize cgroup setup for the child process
- * @child: the child process
+ * cgroup_post_fork - called on a new task after adding it to the task list
+ * @child: the task in question
  *
- * Attach the child process to its css_set calling the subsystem fork()
- * callbacks.
+ * Adds the task to the list running through its css_set if necessary and
+ * call the subsystem fork() callbacks.  Has to be after the task is
+ * visible on the task list in case we race with the first call to
+ * cgroup_task_iter_start() - to guarantee that the new task ends up on its
+ * list.
  */
 void cgroup_post_fork(struct task_struct *child)
-	__releases(&cgroup_threadgroup_rwsem)
 {
 	struct cgroup_subsys *ss;
 	int i;
@@ -6130,8 +6125,6 @@ void cgroup_post_fork(struct task_struct *child)
 	do_each_subsys_mask(ss, i, have_fork_callback) {
 		ss->fork(child);
 	} while_each_subsys_mask();
-
-	cgroup_threadgroup_change_end(current);
 }
 
 /**

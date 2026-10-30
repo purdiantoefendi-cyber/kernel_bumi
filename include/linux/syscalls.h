@@ -69,6 +69,7 @@ struct file_handle;
 struct sigaltstack;
 struct rseq;
 union bpf_attr;
+struct clone_args;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -428,6 +429,8 @@ asmlinkage long sys_fchown(unsigned int fd, uid_t user, gid_t group);
 asmlinkage long sys_openat(int dfd, const char __user *filename, int flags,
 			   umode_t mode);
 asmlinkage long sys_close(unsigned int fd);
+asmlinkage long sys_close_range(unsigned int fd, unsigned int max_fd,
+				unsigned int flags);
 asmlinkage long sys_vhangup(void);
 
 /* fs/pipe.c */
@@ -784,6 +787,9 @@ asmlinkage long sys_clone(unsigned long, unsigned long, int __user *,
 	       int __user *, unsigned long);
 #endif
 #endif
+
+asmlinkage long sys_clone3(struct clone_args __user *uargs, size_t size);
+
 asmlinkage long sys_execve(const char __user *filename,
 		const char __user *const __user *argv,
 		const char __user *const __user *envp);
@@ -948,8 +954,6 @@ asmlinkage long sys_spu_create(const char __user *name,
 /* __ARCH_WANT_SYSCALL_NO_AT */
 asmlinkage long sys_open(const char __user *filename,
 				int flags, umode_t mode);
-asmlinkage long sys_close_range(unsigned int fd, unsigned int max_fd,
-				unsigned int flags);
 asmlinkage long sys_link(const char __user *oldname,
 				const char __user *newname);
 asmlinkage long sys_unlink(const char __user *pathname);
