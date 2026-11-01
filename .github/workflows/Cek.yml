@@ -72,7 +72,7 @@ jobs:
         # Menambahkan flag -k untuk melanjutkan kompilasi meski ada error
         # Memasukkan semua log output (stdout & stderr) ke build.log
         make O=out -j$(nproc) -k $ARGS \
-          KCFLAGS="-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75.cortex-a55 -mtune=cortex-a75.cortex-a55" 2>&1 | tee build.log
+          KCFLAGS="-O3 -Wno-error -mllvm -polly -mllvm -polly-ast-use-context -mcpu=cortex-a75 -mtune=cortex-a75" 2>&1 | tee build.log
         
         # Mengekstrak baris yang mengandung indikasi error fatal
         grep -E -i -n "error:|fatal error:|undefined reference" build.log > errors_summary.log
