@@ -1,0 +1,176 @@
+name: Kernel Repair - branch ok
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: "Nama defconfig ARM64 yang dipakai (tanpa path)"
+        required: true
+        type: string
+      build_target:
+        description: "Target make"
+        required: true
+        default: "Image.gz dtbs modules"
+        type: string
+      jobs:
+        description: "Jumlah job kompilasi"
+        required: true
+        default: "2"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kernel-repair-ok
+  cancel-in-progress: false
+
+jobs:
+  repair-and-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout branch ok
+        uses: actions/checkout@v4
+        with:
+          ref: ok
+          fetch-depth: 0
+
+      - name: Prepare repair branch
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="repair/ok-${GITHUB_RUN_ID}"
+          git switch -c "$BRANCH"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ca-certificates ccache flex git \
+            libelf-dev libssl-dev lld-14 llvm-14 clang-14 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            python3
+
+      - name: Apply safe source corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          # Fix the stale BPF JIT address-range test. The current tree has
+          # search_bpf_extables() support; do not restore removed REGION macros.
+          p = Path("arch/arm64/mm/extable.c")
+          s = p.read_text()
+          old = """int fixup_exception(struct pt_regs *regs)
+          {
+          \tconst struct exception_table_entry *fixup;
+
+          \tfixup = search_exception_tables(instruction_pointer(regs));
+          \tif (!fixup)
+          \t\treturn 0;
+
+          \tif (IS_ENABLED(CONFIG_BPF_JIT) &&
+          \t    regs->pc >= BPF_JIT_REGION_START &&
+          \t    regs->pc < BPF_JIT_REGION_END)
+          \t\treturn arm64_bpf_fixup_exception(fixup, regs);
+
+          \tregs->pc = (unsigned long)&fixup->fixup + fixup->fixup;
+          \treturn 1;
+          }"""
+          new = """int fixup_exception(struct pt_regs *regs)
+          {
+          \tconst struct exception_table_entry *fixup;
+          \tunsigned long addr = instruction_pointer(regs);
+
+          #ifdef CONFIG_BPF_JIT
+          \t/* BPF exception tables use a different entry format. */
+          \tfixup = search_bpf_extables(addr);
+          \tif (fixup)
+          \t\treturn arm64_bpf_fixup_exception(fixup, regs);
+          #endif
+
+          \tfixup = search_exception_tables(addr);
+          \tif (!fixup)
+          \t\treturn 0;
+
+          \tregs->pc = (unsigned long)&fixup->fixup + fixup->fixup;
+          \treturn 1;
+          }"""
+          if old in s:
+              p.write_text(s.replace(old, new, 1))
+              print("Patched arch/arm64/mm/extable.c")
+          elif "BPF_JIT_REGION_START" in s or "BPF_JIT_REGION_END" in s:
+              raise SystemExit("Unexpected extable.c layout: manual review required")
+          else:
+              print("extable.c already migrated; no change")
+
+          # Fix the definite clone3 access_ok() parameter typo only.
+          # The clone3 argument-copy logic is deliberately not guessed here.
+          p = Path("kernel/fork.c")
+          s = p.read_text()
+          wrong = "access_ok(VERIFY_READ, uargs, size)"
+          right = "access_ok(VERIFY_READ, uargs, usize)"
+          if wrong in s:
+              p.write_text(s.replace(wrong, right, 1))
+              print("Patched clone3 access_ok() size -> usize")
+          else:
+              print("clone3 access_ok() typo not present; no change")
+          PY
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Configure ARM64 kernel
+        env:
+          DEFCONFIG: ${{ inputs.defconfig }}
+        run: |
+          set -euo pipefail
+          test -n "$DEFCONFIG"
+          make O=out ARCH=arm64 LLVM=-14 CROSS_COMPILE=aarch64-linux-gnu- "$DEFCONFIG"
+
+      - name: Build kernel
+        env:
+          BUILD_TARGET: ${{ inputs.build_target }}
+          JOBS: ${{ inputs.jobs }}
+        run: |
+          set -euo pipefail
+          make -j"$JOBS" O=out ARCH=arm64 LLVM=-14 \
+            CROSS_COMPILE=aarch64-linux-gnu- $BUILD_TARGET 2>&1 | tee build.log
+
+      - name: Confirm required features remain enabled
+        run: |
+          set -euo pipefail
+          grep -E '^(CONFIG_BPF=|CONFIG_BPF_SYSCALL=|CONFIG_MEMCG=|CONFIG_MEMCG_KMEM=|CONFIG_MGLRU=)' out/.config || true
+          grep -q '^CONFIG_BPF=y' out/.config
+          grep -q '^CONFIG_MEMCG=y' out/.config
+
+      - name: Commit validated repair
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add arch/arm64/mm/extable.c kernel/fork.c
+          git commit -m "arm64: fix BPF exception lookup and clone3 size check"
+          git push origin "HEAD:ok"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-repair-build-log
+          path: |
+            build.log
+            out/.config
+            out/arch/arm64/boot/Image*
+          if-no-files-found: ignore
