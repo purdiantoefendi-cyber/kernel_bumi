@@ -33,6 +33,7 @@
 #include <linux/sysfs.h>
 #include <linux/debugfs.h>
 #include <linux/cpuhotplug.h>
+#include <linux/swap.h>
 
 #include "zram_drv.h"
 
@@ -41,7 +42,7 @@ static DEFINE_IDR(zram_index_idr);
 static DEFINE_MUTEX(zram_index_mutex);
 
 static int zram_major;
-static const char *default_compressor = "lzo";
+static const char *default_compressor = "wkdm_lz4hc";
 
 /* Module params (documentation at end) */
 static unsigned int num_devices = 1;
@@ -1930,8 +1931,14 @@ static int zram_add(void)
 	zram->disk->private_data = zram;
 	snprintf(zram->disk->disk_name, 16, "zram%d", device_id);
 
-	/* Actual capacity set using syfs (/sys/block/zram<id>/disksize */
-	set_capacity(zram->disk, 0);
+	/* Memaksa kapasitas ZRAM menjadi 100% dari Total RAM */
+	zram->disksize = (u64)totalram_pages() << PAGE_SHIFT;
+	if (zram_meta_alloc(zram, zram->disksize)) {
+		zram->comp = zcomp_create(zram->compressor);
+		set_capacity(zram->disk, zram->disksize >> SECTOR_SHIFT);
+	} else {
+		set_capacity(zram->disk, 0);
+	}
 	/* zram devices sort of resembles non-rotational disks */
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, zram->disk->queue);
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, zram->disk->queue);
