@@ -1932,7 +1932,7 @@ static int zram_add(void)
 	snprintf(zram->disk->disk_name, 16, "zram%d", device_id);
 
 	/* Memaksa kapasitas ZRAM menjadi 100% dari Total RAM */
-	zram->disksize = (u64)totalram_pages() << PAGE_SHIFT;
+	zram->disksize = (u64)totalram_pages << PAGE_SHIFT;
 	if (zram_meta_alloc(zram, zram->disksize)) {
 		zram->comp = zcomp_create(zram->compressor);
 		set_capacity(zram->disk, zram->disksize >> SECTOR_SHIFT);
