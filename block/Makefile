@@ -2,7 +2,7 @@
 #
 # Makefile for the kernel block layer
 #
-
+ccflags-y += -I$(srctree)/drivers/mmc/core
 obj-$(CONFIG_BLOCK) := bio.o elevator.o blk-core.o blk-tag.o blk-sysfs.o \
 			blk-flush.o blk-settings.o blk-ioc.o blk-map.o \
 			blk-exec.o blk-merge.o blk-softirq.o blk-timeout.o \
@@ -25,6 +25,9 @@ obj-$(CONFIG_MQ_IOSCHED_DEADLINE)	+= mq-deadline.o
 obj-$(CONFIG_MQ_IOSCHED_KYBER)	+= kyber-iosched.o
 bfq-y				:= bfq-iosched.o bfq-wf2q.o bfq-cgroup.o
 obj-$(CONFIG_IOSCHED_BFQ)	+= bfq.o
+obj-$(CONFIG_IOSCHED_ZEN)	+= mq_zen.o
+obj-$(CONFIG_IOSCHED_GAMER) += mq_gamer.o
+obj-$(CONFIG_IOSCHED_PERFORMANCE) += mq_performance.o
 
 obj-$(CONFIG_BLOCK_COMPAT)	+= compat_ioctl.o
 obj-$(CONFIG_BLK_CMDLINE_PARSER)	+= cmdline-parser.o
