@@ -323,8 +323,8 @@ static void *hybrid_alloc_ctx(struct crypto_scomp *tfm){
     struct hybrid_ctx *c = kzalloc(sizeof(*c), GFP_KERNEL); 
     if(!c) return ERR_PTR(-ENOMEM); 
 
-    c->lz4_workspace = kmalloc(LZ4_sizeofState(), GFP_KERNEL); 
-    c->lz4hc_workspace = vmalloc(LZ4_sizeofStateHC()); 
+    c->lz4_workspace = kmalloc(LZ4_MEM_COMPRESS, GFP_KERNEL); 
+    c->lz4hc_workspace = vmalloc(LZ4HC_MEM_COMPRESS);
     c->wkdm_buffer = kmalloc(WKDM_MAX_CAPACITY, GFP_KERNEL); 
 
     if(!c->lz4_workspace || !c->lz4hc_workspace || !c->wkdm_buffer){ 
