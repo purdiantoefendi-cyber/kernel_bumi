@@ -630,7 +630,7 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	max = sg_cpu->max;
 	util = sugov_iowait_apply(sg_cpu, time, util, max);
 #ifdef CONFIG_UCLAMP_TASK
-	trace_schedutil_uclamp_util(policy->cpu, util);
+	//trace_schedutil_uclamp_util(policy->cpu, util);
 #endif
 	next_f = get_next_freq(sg_policy, util, max);
 	/*
@@ -648,7 +648,7 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 	if (sugov_update_next_freq(sg_policy, time, next_f)) {
 		mt_cpufreq_set_by_wfi_load_cluster(cid, next_f);
 		policy->cur = next_f;
-		trace_sched_util(cid, next_f, time);
+		//trace_sched_util(cid, next_f, time);
 	}
 #else
 
@@ -689,7 +689,7 @@ static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
 		j_util = sugov_iowait_apply(j_sg_cpu, time, j_util, j_max);
 
 #ifdef CONFIG_UCLAMP_TASK
-		trace_schedutil_uclamp_util(j, j_util);
+		//trace_schedutil_uclamp_util(j, j_util);
 #endif
 
 		if (j_util * max > j_max * util) {
@@ -733,7 +733,7 @@ sugov_update_shared(struct update_util_data *hook, u64 time, unsigned int flags)
 			next_f = mt_cpufreq_find_close_freq(cid, next_f);
 			mt_cpufreq_set_by_wfi_load_cluster(cid, next_f);
 			__cpufreq_notifier_fp(cid, next_f);
-			trace_sched_util(cid, next_f, time);
+			//trace_sched_util(cid, next_f, time);
 		}
 #else
 		if (sg_policy->policy->fast_switch_enabled)
