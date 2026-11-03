@@ -438,15 +438,31 @@ static int hybrid_sdecompress(struct crypto_scomp *tfm, const u8 *src, unsigned 
     return -EINVAL;
 }
 
-static struct scomp_alg scomp={
-    .alloc_ctx=hybrid_alloc_ctx, 
-    .free_ctx=hybrid_free_ctx, 
-    .compress=hybrid_scompress, 
-    .decompress=hybrid_sdecompress,
-    .base={.cra_name="wkdm_lz4hc",.cra_driver_name="wkdm_lz4hc-v58",.cra_module=THIS_MODULE,},
+static struct scomp_alg scomp = {
+    .alloc_ctx   = hybrid_alloc_ctx, 
+    .free_ctx    = hybrid_free_ctx, 
+    .compress    = hybrid_scompress, 
+    .decompress  = hybrid_sdecompress,
+    .base        = {
+        .cra_name        = "wkdm_lz4hc",
+        .cra_driver_name = "wkdm_lz4hc-v58",
+        .cra_module      = THIS_MODULE,
+    },
 };
 
-static int __init mod_init(void){ return crypto_register_scomp(&scomp); }
-static void __exit mod_fini(void){ crypto_unregister_scomp(&scomp); }
-module_init(mod_init); module_exit(mod_fini);
-MODULE_LICENSE("GPL"); MODULE_AUTHOR("Purdianto Efendi"); MODULE_DESCRIPTION("WKdm-LZ4/HC V58 SILICON INCARNATE (C89 Strict Fix)"); MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
+static int __init mod_init(void) {
+    return crypto_register_scomp(&scomp);
+}
+
+static void __exit mod_fini(void) {
+    crypto_unregister_scomp(&scomp);
+}
+
+/* PERBAIKAN: Gunakan subsys_initcall agar driver crypto terdaftar sebelum zram_init */
+subsys_initcall(mod_init);
+module_exit(mod_fini);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Purdianto Efendi");
+MODULE_DESCRIPTION("WKdm-LZ4/HC V58 SILICON INCARNATE (C89 Strict Fix)");
+MODULE_ALIAS_CRYPTO("wkdm_lz4hc");
