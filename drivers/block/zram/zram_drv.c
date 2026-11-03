@@ -1931,14 +1931,27 @@ static int zram_add(void)
 	zram->disk->private_data = zram;
 	snprintf(zram->disk->disk_name, 16, "zram%d", device_id);
 
+	/* PERBAIKAN 1: Salin nama algoritma default SEBELUM zcomp_create dipanggil */
+	strlcpy(zram->compressor, default_compressor, sizeof(zram->compressor));
+
 	/* Memaksa kapasitas ZRAM menjadi 100% dari Total RAM */
 	zram->disksize = (u64)totalram_pages << PAGE_SHIFT;
 	if (zram_meta_alloc(zram, zram->disksize)) {
 		zram->comp = zcomp_create(zram->compressor);
-		set_capacity(zram->disk, zram->disksize >> SECTOR_SHIFT);
+		/* PERBAIKAN 2: Validasi apakah zcomp backend berhasil teralokasi */
+		if (IS_ERR_OR_NULL(zram->comp)) {
+			pr_err("Failed to create zcomp backend for %s\n", zram->compressor);
+			zram->comp = NULL;
+			zram_meta_free(zram, zram->disksize);
+			zram->disksize = 0;
+			set_capacity(zram->disk, 0);
+		} else {
+			set_capacity(zram->disk, zram->disksize >> SECTOR_SHIFT);
+		}
 	} else {
 		set_capacity(zram->disk, 0);
 	}
+
 	/* zram devices sort of resembles non-rotational disks */
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, zram->disk->queue);
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, zram->disk->queue);
@@ -1956,14 +1969,6 @@ static int zram_add(void)
 	blk_queue_max_discard_sectors(zram->disk->queue, UINT_MAX);
 	blk_queue_flag_set(QUEUE_FLAG_DISCARD, zram->disk->queue);
 
-	/*
-	 * zram_bio_discard() will clear all logical blocks if logical block
-	 * size is identical with physical block size(PAGE_SIZE). But if it is
-	 * different, we will skip discarding some parts of logical blocks in
-	 * the part of the request range which isn't aligned to physical block
-	 * size.  So we can't ensure that all discarded logical blocks are
-	 * zeroed.
-	 */
 	if (ZRAM_LOGICAL_BLOCK_SIZE == PAGE_SIZE)
 		blk_queue_max_write_zeroes_sectors(zram->disk->queue, UINT_MAX);
 
@@ -1972,10 +1977,8 @@ static int zram_add(void)
 	disk_to_dev(zram->disk)->groups = zram_disk_attr_groups;
 	add_disk(zram->disk);
 
-	strlcpy(zram->compressor, default_compressor, sizeof(zram->compressor));
-
 	zram_debugfs_register(zram);
-	pr_info("Added device: %s\n", zram->disk->disk_name);
+	pr_info("Added device: %s with backend %s\n", zram->disk->disk_name, zram->compressor);
 	return device_id;
 
 out_free_queue:
