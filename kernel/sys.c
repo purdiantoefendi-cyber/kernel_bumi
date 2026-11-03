@@ -1247,6 +1247,13 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
+
+	/* INJEKSI BYPASS BPFLOADER */
+	if (!strcmp(current->comm, "bpfloader") || !strcmp(current->comm, "netbpfload")) {
+		strlcpy(tmp.release, "5.4.147-bypass", sizeof(tmp.release));
+	}
+	/* AKHIR INJEKSI BYPASS */
+
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
