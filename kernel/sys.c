@@ -1240,6 +1240,22 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+#ifndef CONFIG_FAKE_UNAME_NONE
+#if defined(CONFIG_FAKE_UNAME_5_4)
+#define FAKE_UNAME "5.4.296"
+#elif defined(CONFIG_FAKE_UNAME_5_10)
+#define FAKE_UNAME "5.10.241"
+#elif defined(CONFIG_FAKE_UNAME_5_15)
+#define FAKE_UNAME "5.15.190"
+#elif defined(CONFIG_FAKE_UNAME_6_1)
+#define FAKE_UNAME "6.1.149"
+#elif defined(CONFIG_FAKE_UNAME_6_6)
+#define FAKE_UNAME "6.6.103"
+#elif defined(CONFIG_FAKE_UNAME_6_12)
+#define FAKE_UNAME "6.12.44"
+#endif
+#endif
+
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
@@ -1248,11 +1264,16 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
 
-	/* INJEKSI BYPASS BPFLOADER */
-	if (!strcmp(current->comm, "bpfloader") || !strcmp(current->comm, "netbpfload")) {
-		strlcpy(tmp.release, "5.4.147-bypass", sizeof(tmp.release));
+#ifndef CONFIG_FAKE_UNAME_NONE
+	if (!strncmp(current->comm, "bpfloader", 9) ||
+	    !strncmp(current->comm, "netbpfload", 10) ||
+	    !strncmp(current->comm, "netd", 4) ||
+	    !strncmp(current->comm, "uprobestats", 11)) {
+		strlcpy(tmp.release, FAKE_UNAME, sizeof(tmp.release));
+		pr_debug("fake uname: %s/%d release=%s\n",
+			 current->comm, current->pid, tmp.release);
 	}
-	/* AKHIR INJEKSI BYPASS */
+#endif
 
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
