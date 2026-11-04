@@ -1,13 +1,18 @@
-name: Transfer Custom Files Between Branches
+name: Transfer Custom Files Between Repositories
 
 on:
   workflow_dispatch:
     inputs:
+      source_repo:
+        description: 'Repo Sumber (Format: owner/nama-repo)'
+        required: true
+        type: string
+        default: 'LineageOS/android_kernel_xiaomi_earth'
       source_branch:
         description: 'Branch Sumber (Tempat file custom berada)'
         required: true
         type: string
-        default: 'diantk'
+        default: 'lineage-24.0'
       target_branch:
         description: 'Branch Tujuan (Tempat file akan dimasukkan)'
         required: true
@@ -22,7 +27,7 @@ on:
         description: 'Nama / Pesan Commit'
         required: true
         type: string
-        default: 'feat: add custom performance files'
+        default: 'feat: add custom performance files from external repo'
       commit_author:
         description: 'Nama Pembuat Commit (Author)'
         required: true
@@ -49,15 +54,22 @@ jobs:
           git config --global user.email "bot@github.action.com"
           git config --global --add safe.directory '*'
 
-      - name: 🔄 Tarik File dari Branch Sumber & Pertahankan Folder
+      - name: 🔄 Tarik File dari Repo & Branch Sumber
         env:
           FILE_LIST_INPUT: ${{ inputs.file_list }}
+          TOKEN: ${{ secrets.PAT_TOKEN || github.token }}
         run: |
+          SOURCE_REPO="${{ inputs.source_repo }}"
           SOURCE_BRANCH="${{ inputs.source_branch }}"
           TARGET_BRANCH="${{ inputs.target_branch }}"
 
-          echo "Mengambil data dari origin/$SOURCE_BRANCH..."
-          git fetch origin "$SOURCE_BRANCH"
+          REMOTE_URL="https://x-access-token:${TOKEN}@github.com/${SOURCE_REPO}.git"
+
+          echo "Menambahkan remote external_source ($SOURCE_REPO)..."
+          git remote add external_source "$REMOTE_URL" || git remote set-url external_source "$REMOTE_URL"
+
+          echo "Mengambil data dari external_source/$SOURCE_BRANCH..."
+          git fetch external_source "$SOURCE_BRANCH"
 
           # Membaca daftar file
           mapfile -t FILES < <(echo "$FILE_LIST_INPUT" | tr ' ' '\n' | grep -v '^$')
@@ -73,12 +85,12 @@ jobs:
             file=$(echo "$file" | tr -d '\r')
             if [ -z "$file" ]; then continue; fi
 
-            if git ls-tree -r "origin/$SOURCE_BRANCH" --name-only | grep -q "^$file$"; then
-              git checkout "origin/$SOURCE_BRANCH" -- "$file"
+            if git ls-tree -r "external_source/$SOURCE_BRANCH" --name-only | grep -q "^$file$"; then
+              git checkout "external_source/$SOURCE_BRANCH" -- "$file"
               echo "✅ Berhasil ditarik: $file"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
-              echo "⚠️ Lewati (Tidak ada di $SOURCE_BRANCH): $file"
+              echo "⚠️ Lewati (Tidak ada di $SOURCE_REPO/$SOURCE_BRANCH): $file"
               FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
           done
