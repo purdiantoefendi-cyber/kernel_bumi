@@ -9,6 +9,10 @@
 #include <net/tcp.h>
 #include <net/tls.h>
 
+/* Forward declaration untuk sk_psock_from_strp */
+struct strparser;
+static struct sk_psock *sk_psock_from_strp(struct strparser *strp);
+
 static bool sk_msg_try_coalesce_ok(struct sk_msg *msg, int elem_first_coalesce)
 {
 	if (msg->sg.end > msg->sg.start &&
