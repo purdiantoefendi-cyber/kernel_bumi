@@ -9,8 +9,21 @@
 #include <linux/delay.h>
 #include <linux/sched/clock.h>
 
-#if defined(CONFIG_THERMAL)
+#if defined(CONFIG_THERMAL) && defined(CONFIG_MTK_LEGACY_THERMAL)
 #include <mtk_thermal.h> /* mtkTTimer_start/cancel_timer */
+#elif defined(CONFIG_THERMAL)
+/*
+ * The MediaTek legacy thermal driver (and its timer registry) is not
+ * built when CONFIG_MTK_LEGACY_THERMAL is disabled.  Keep local no-op
+ * fallbacks so idle code does not reference missing thermal symbols.
+ */
+static inline void mtkTTimer_cancel_timer(void)
+{
+}
+
+static inline void mtkTTimer_start_timer(void)
+{
+}
 #endif
 #include <mtk_idle_profile.h>
 #include <linux/atomic.h>
