@@ -22,9 +22,10 @@ on:
       clang_type:
         description: 'Pilih Clang Toolchain'
         required: true
-        default: 'zyc'
+        default: 'latest'
         type: choice
         options:
+          - latest
           - zyc
           - aosp
           - pixel
@@ -65,17 +66,25 @@ jobs:
         CLANG_CHOICE="${{ github.event.inputs.clang_type }}"
         echo "Menggunakan Clang: $CLANG_CHOICE"
 
-        if [ "$CLANG_CHOICE" = "zyc" ]; then
+        if [ "$CLANG_CHOICE" = "latest" ]; then
+          # Install Clang terbaru langsung dari repository Ubuntu (Sangat cepat)
+          sudo apt-get install -y clang lld llvm
+          echo "Clang version:"
+          clang --version
+        elif [ "$CLANG_CHOICE" = "zyc" ]; then
+          # ZyC Clang
           git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
+          echo "$PWD/clang/bin" >> $GITHUB_PATH
         elif [ "$CLANG_CHOICE" = "aosp" ]; then
-          # Mirror AOSP Clang (Contoh menggunakan crDroid AOSP Clang r416183b)
-          git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r416183b.git clang
+          # AOSP Official Clang-r547379 (Extract tar.gz)
+          mkdir -p clang
+          wget -qO- https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz | tar -xz -C clang
+          echo "$PWD/clang/bin" >> $GITHUB_PATH
         elif [ "$CLANG_CHOICE" = "pixel" ]; then
-          # Mirror Pixel / Proton Clang (Sangat optimal untuk device flagship/AOSP base)
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          # PlaygroundTC (PixelOS)
+          git clone --depth=1 https://gitlab.com/PixelOS-Devices/playgroundtc.git clang
+          echo "$PWD/clang/bin" >> $GITHUB_PATH
         fi
-        
-        echo "$PWD/clang/bin" >> $GITHUB_PATH
 
     # SETUP KERNELSU DENGAN KONDISI (BISA DILEWATI)
     - name: Setup KernelSU
