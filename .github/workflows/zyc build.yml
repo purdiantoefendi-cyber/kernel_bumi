@@ -19,6 +19,15 @@ on:
         description: 'Defconfig'
         required: true
         default: 'earth_defconfig'
+      clang_type:
+        description: 'Pilih Clang Toolchain'
+        required: true
+        default: 'zyc'
+        type: choice
+        options:
+          - zyc
+          - aosp
+          - pixel
       kernelsu_url:
         description: 'Custom KSU URL (Kosongkan untuk skip KSU)'
         required: false
@@ -50,10 +59,22 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3 python-is-python3 git wget curl
 
-    # MENGGUNAKAN ZYC-CLANG (MIRROR CLANGSANTONI)
-    - name: Setup ZyC-Clang
+    # SETUP CLANG TOOLCHAIN BERDASARKAN PILIHAN USER
+    - name: Setup Clang Toolchain
       run: |
-        git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
+        CLANG_CHOICE="${{ github.event.inputs.clang_type }}"
+        echo "Menggunakan Clang: $CLANG_CHOICE"
+
+        if [ "$CLANG_CHOICE" = "zyc" ]; then
+          git clone --depth=1 https://gitlab.com/clangsantoni/zyc_clang.git clang
+        elif [ "$CLANG_CHOICE" = "aosp" ]; then
+          # Mirror AOSP Clang (Contoh menggunakan crDroid AOSP Clang r416183b)
+          git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r416183b.git clang
+        elif [ "$CLANG_CHOICE" = "pixel" ]; then
+          # Mirror Pixel / Proton Clang (Sangat optimal untuk device flagship/AOSP base)
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+        fi
+        
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
     # SETUP KERNELSU DENGAN KONDISI (BISA DILEWATI)
