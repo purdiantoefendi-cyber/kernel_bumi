@@ -1,0 +1,46 @@
+name: Apply Custom Patch & Auto Commit
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_url:
+        description: 'URL file patch (support link blob GitHub atau raw)'
+        required: true
+        default: 'https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd/blob/dcd789634247c77d8549a42aef232c680a905585/Patches/Patch/susfs_patch_to_4.19.patch'
+
+jobs:
+  apply-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download & Normalize Patch URL
+        run: |
+          # Mengonversi link GitHub blob ke raw.githubusercontent.com jika diperlukan
+          RAW_URL=$(echo "${{ github.event.inputs.patch_url }}" | sed -e 's|github.com/\([^/]*\)/\([^/]*\)/blob/|raw.githubusercontent.com/\1/\2/|')
+          echo "Mengunduh patch dari: $RAW_URL"
+          curl -sSL "$RAW_URL" -o custom.patch
+
+      - name: Apply Patch
+        run: |
+          # Untuk patch kernel/SUSFS, coba gunakan patch -p1 terlebih dahulu, 
+          # jika gagal akan fallback ke git apply
+          if patch -p1 --forward --batch < custom.patch; then
+            echo "Patch berhasil diaplikasikan menggunakan patch -p1"
+          else
+            echo "Format patch membutuhkan git apply, mencoba git apply -p1..."
+            git apply -p1 --ignore-whitespace custom.patch
+          fi
+          rm custom.patch
+
+      - name: Commit & Push Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "feat: apply custom patch from ${{ github.event.inputs.patch_url }}"
+          branch: ${{ github.ref_name }}
