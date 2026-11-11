@@ -1,0 +1,90 @@
+name: Revert Specific Commits
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_hashes:
+        description: 'Daftar Commit hash (SHA) yang ingin di-revert (pisahkan dengan spasi atau koma)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch target (contoh: main)'
+        required: true
+        default: 'main'
+        type: string
+
+# Memberikan izin kepada GitHub Actions bot untuk melakukan push
+permissions:
+  contents: write 
+
+jobs:
+  revert-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 # Penting: Mengambil seluruh history agar git mengenali commit hash
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Revert Commits
+        id: revert
+        run: |
+          # Normalisasi input: ubah koma menjadi spasi agar mudah di-loop
+          HASHES=$(echo "${{ inputs.commit_hashes }}" | tr ',' ' ')
+          
+          SUCCESS_LIST=""
+          FAILED_LIST=""
+          
+          # Melakukan perulangan untuk setiap commit hash
+          for HASH in $HASHES; do
+            echo "----------------------------------------"
+            echo "Mencoba revert commit: $HASH"
+            
+            # Jika revert berhasil
+            if git revert --no-edit $HASH; then
+              echo "✅ Berhasil revert $HASH"
+              SUCCESS_LIST="$SUCCESS_LIST $HASH"
+            else
+              echo "❌ Gagal revert $HASH. Melakukan abort untuk melanjutkan ke hash berikutnya."
+              
+              # Tambahkan || true agar script tidak crash jika tidak ada revert yang sedang menggantung
+              git revert --abort || true
+              
+              # Memastikan working tree benar-benar bersih sebelum lanjut ke hash berikutnya
+              git reset --hard HEAD
+              
+              FAILED_LIST="$FAILED_LIST $HASH"
+            fi
+          done
+          
+          echo "----------------------------------------"
+          # Menampilkan ringkasan di Log Terminal Action
+          echo "=== RINGKASAN REVERT ==="
+          echo "Berhasil: ${SUCCESS_LIST:-Tidak ada}"
+          echo "Gagal: ${FAILED_LIST:-Tidak ada}"
+          
+          # Menampilkan ringkasan visual di UI GitHub Actions (Job Summary)
+          echo "### Ringkasan Revert" >> $GITHUB_STEP_SUMMARY
+          echo "- **Berhasil di-revert**: ${SUCCESS_LIST:-Tidak ada}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Gagal (Conflict/Error)**: ${FAILED_LIST:-Tidak ada}" >> $GITHUB_STEP_SUMMARY
+          
+          # Mengecek apakah ada commit yang berhasil untuk di-push
+          # Menghapus spasi berlebih di awal/akhir string (trim)
+          SUCCESS_LIST=$(echo $SUCCESS_LIST | xargs)
+          if [ -n "$SUCCESS_LIST" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Push Changes
+        # Push hanya dijalankan JIKA ada minimal 1 commit yang berhasil di-revert
+        if: steps.revert.outputs.has_changes == 'true'
+        run: |
+          echo "Mendorong perubahan ke branch ${{ inputs.branch }}..."
+          git push origin ${{ inputs.branch }}
