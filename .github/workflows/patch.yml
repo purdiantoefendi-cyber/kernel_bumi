@@ -1,16 +1,25 @@
-name: Universal Smart Patch URL (All Platforms)
+name: Universal Smart Patcher
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: 'Branch target (contoh: main, kernel-4.19)'
+        description: 'Branch tujuan (otomatis dibuat jika belum ada)'
         required: true
         default: 'main'
         type: string
-      patch_url:
-        description: 'URL Patch (GitHub, GitLab, Codeberg, Googlesource, Lore, Pastebin, GDrive, Raw)'
-        required: true
+      patch_urls:
+        description: 'Satu atau banyak URL patch, pisahkan dengan spasi (GitHub, GitLab, Bitbucket, AOSP, Lore, GDrive, Raw)'
+        required: false
+        type: string
+      allow_rejects:
+        description: 'Tetap commit hasil patch & file .rej jika ada hunk yang bentrok'
+        required: false
+        default: true
+        type: boolean
+      commit_message:
+        description: 'Pesan commit (opsional)'
+        required: false
         type: string
 
 jobs:
@@ -20,91 +29,138 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout Target Branch
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
 
-      - name: Resolve & Download Patch
+      - name: Prepare Target Branch
         env:
-          INPUT_URL: ${{ inputs.patch_url }}
+          INPUT_BRANCH: ${{ inputs.target_branch }}
         run: |
-          URL="${INPUT_URL%/}"
-          IS_BASE64=false
-
-          # 1. GitHub (Blob, Commit, PR, Gist)
-          if [[ "$URL" =~ github\.com/[^/]+/[^/]+/blob/ ]]; then
-            RAW_URL=$(echo "$URL" | sed -E 's|github\.com/([^/]+)/([^/]+)/blob/|raw.githubusercontent.com/\1/\2/|')
-          elif [[ "$URL" =~ github\.com/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pull/[0-9]+)$ ]]; then
-            RAW_URL="${URL}.patch"
-          elif [[ "$URL" =~ gist\.github\.com/[^/]+/[0-9a-fA-F]+$ ]]; then
-            RAW_URL="${URL}/raw"
-
-          # 2. GitLab (Self-hosted maupun gitlab.com)
-          elif [[ "$URL" =~ /-/blob/ ]]; then
-            RAW_URL=$(echo "$URL" | sed -E 's|/-/blob/|/-/raw/|')
-          elif [[ "$URL" =~ /-/commit/[0-9a-fA-F]+$ ]] || [[ "$URL" =~ /-/merge_requests/[0-9]+$ ]]; then
-            RAW_URL="${URL}.patch"
-
-          # 3. Codeberg / Gitea / Forgejo
-          elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/src/ ]]; then
-            RAW_URL=$(echo "$URL" | sed -E 's|/src/|/raw/|')
-          elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pulls/[0-9]+)$ ]]; then
-            RAW_URL="${URL}.patch"
-
-          # 4. AOSP / Google Gitiles (*.googlesource.com)
-          elif [[ "$URL" =~ \.googlesource\.com/.+/\+/[0-9a-fA-F]+$ ]]; then
-            RAW_URL="${URL}^+!/?format=TEXT"
-            IS_BASE64=true
-
-          # 5. Linux Kernel Mailing List (lore.kernel.org)
-          elif [[ "$URL" =~ lore\.kernel\.org/ ]] && [[ ! "$URL" =~ /raw$ ]]; then
-            RAW_URL="${URL}/raw"
-
-          # 6. Pastebin
-          elif [[ "$URL" =~ pastebin\.com/[a-zA-Z0-9]+$ ]]; then
-            RAW_URL=$(echo "$URL" | sed -E 's|pastebin\.com/|pastebin.com/raw/|')
-
-          # 7. Google Drive (File publik)
-          elif [[ "$URL" =~ drive\.google\.com/file/d/([a-zA-Z0-9_-]+) ]]; then
-            FILE_ID="${BASH_REMATCH[1]}"
-            RAW_URL="https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download"
-
-          # 8. Direct Raw URL (0x0.st, cdn.kernel.org, server pribadi, dll.)
+          TARGET="${INPUT_BRANCH:-${{ github.ref_name }}}"
+          if git show-ref --verify --quiet "refs/remotes/origin/$TARGET"; then
+            git checkout -B "$TARGET" "origin/$TARGET"
           else
-            RAW_URL="$URL"
+            echo "Branch '$TARGET' belum ada, membuat branch baru..."
+            git checkout -b "$TARGET"
+          fi
+          echo "TARGET_BRANCH=$TARGET" >> "$GITHUB_ENV"
+
+      - name: Collect & Apply All Patches
+        env:
+          INPUT_URLS: ${{ inputs.patch_urls }}
+          ALLOW_REJECTS: ${{ inputs.allow_rejects }}
+        run: |
+          mkdir -p /tmp/queued_patches
+          COUNTER=1
+
+          # 1. Kumpulkan patch dari folder lokal patches/ (jika ada di branch)
+          shopt -s nullglob
+          LOCAL_FILES=(patches/*.patch patches/*.diff)
+          if [ ${#LOCAL_FILES[@]} -gt 0 ]; then
+            IFS=$'\n' SORTED_LOCAL=($(sort <<<"${LOCAL_FILES[*]}"))
+            unset IFS
+            for f in "${SORTED_LOCAL[@]}"; do
+              cp "$f" "/tmp/queued_patches/$(printf '%03d' $COUNTER)_$(basename "$f")"
+              rm -f "$f"
+              COUNTER=$((COUNTER + 1))
+            done
           fi
 
-          echo "Mengunduh dari: $RAW_URL"
-          if [ "$IS_BASE64" = true ]; then
-            curl -fSL "$RAW_URL" | base64 -d > custom.patch
-          else
-            curl -fSL "$RAW_URL" -o custom.patch
+          # 2. Unduh patch dari URL (jika diisi)
+          if [ -n "$INPUT_URLS" ]; then
+            URLS=$(echo "$INPUT_URLS" | tr ',' ' ')
+            for raw_input in $URLS; do
+              URL="${raw_input%/}"
+              IS_BASE64=false
+              OUT_FILE="/tmp/queued_patches/$(printf '%03d' $COUNTER)_remote.patch"
+
+              if [[ "$URL" =~ github\.com/[^/]+/[^/]+/blob/ ]]; then
+                RAW_URL=$(echo "$URL" | sed -E 's|github\.com/([^/]+)/([^/]+)/blob/|raw.githubusercontent.com/\1/\2/|')
+              elif [[ "$URL" =~ github\.com/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pull/[0-9]+)$ ]]; then
+                RAW_URL="${URL}.patch"
+              elif [[ "$URL" =~ gist\.github\.com/[^/]+/[0-9a-fA-F]+$ ]]; then
+                RAW_URL="${URL}/raw"
+              elif [[ "$URL" =~ /-/blob/ ]]; then
+                RAW_URL=$(echo "$URL" | sed -E 's|/-/blob/|/-/raw/|')
+              elif [[ "$URL" =~ /-/commit/[0-9a-fA-F]+$ ]] || [[ "$URL" =~ /-/merge_requests/[0-9]+$ ]]; then
+                RAW_URL="${URL}.patch"
+              elif [[ "$URL" =~ bitbucket\.org/[^/]+/[^/]+/src/ ]]; then
+                RAW_URL=$(echo "$URL" | sed -E 's|/src/|/raw/|')
+              elif [[ "$URL" =~ bitbucket\.org/[^/]+/[^/]+/commits/[0-9a-fA-F]+$ ]]; then
+                RAW_URL="${URL}/raw"
+              elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/src/ ]]; then
+                RAW_URL=$(echo "$URL" | sed -E 's|/src/|/raw/|')
+              elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pulls/[0-9]+)$ ]]; then
+                RAW_URL="${URL}.patch"
+              elif [[ "$URL" =~ \.googlesource\.com/.+/\+/[0-9a-fA-F]+$ ]]; then
+                RAW_URL="${URL}^+!/?format=TEXT"
+                IS_BASE64=true
+              elif [[ "$URL" =~ lore\.kernel\.org/ ]] && [[ ! "$URL" =~ /raw$ ]]; then
+                RAW_URL="${URL}/raw"
+              elif [[ "$URL" =~ pastebin\.com/[a-zA-Z0-9]+$ ]]; then
+                RAW_URL=$(echo "$URL" | sed -E 's|pastebin\.com/|pastebin.com/raw/|')
+              elif [[ "$URL" =~ drive\.google\.com/file/d/([a-zA-Z0-9_-]+) ]]; then
+                FILE_ID="${BASH_REMATCH[1]}"
+                RAW_URL="https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download"
+              else
+                RAW_URL="$URL"
+              fi
+
+              echo "Mengunduh: $RAW_URL"
+              if [ "$IS_BASE64" = true ]; then
+                curl -fSL "$RAW_URL" | base64 -d > "$OUT_FILE"
+              else
+                curl -fSL "$RAW_URL" -o "$OUT_FILE"
+              fi
+
+              if head -n 10 "$OUT_FILE" | grep -qiE '<!DOCTYPE html|<html'; then
+                echo "Error: Tautan $URL menghasilkan halaman HTML, bukan patch."
+                exit 1
+              fi
+
+              COUNTER=$((COUNTER + 1))
+            done
           fi
 
-          # Validasi: pastikan hasil unduhan bukan halaman HTML (login/404)
-          if head -n 5 custom.patch | grep -qiE '<!DOCTYPE html|<html'; then
-            echo "Error: Tautan menghasilkan halaman HTML, bukan file patch mentah. Pastikan file bersifat publik."
+          # 3. Eksekusi semua patch yang terkumpul
+          PATCH_FILES=(/tmp/queued_patches/*.patch /tmp/queued_patches/*.diff)
+          if [ ${#PATCH_FILES[@]} -eq 0 ]; then
+            echo "Error: Tidak ada URL patch yang diisi dan tidak ada file di folder patches/."
             exit 1
           fi
 
-          echo "Berhasil mengunduh patch ($(wc -l < custom.patch) baris)"
+          for pfile in "${PATCH_FILES[@]}"; do
+            [ -e "$pfile" ] || continue
+            echo "=== Menerapkan $(basename "$pfile") ==="
 
-      - name: Apply Patch
-        run: |
-          if patch -p1 --forward --batch < custom.patch; then
-            echo "Sukses dengan patch -p1"
-          elif git apply -p1 --ignore-whitespace custom.patch; then
-            echo "Sukses dengan git apply"
-          else
-            echo "Patch gagal diterapkan!"
-            exit 1
+            if patch -p1 --fuzz=3 --forward --batch < "$pfile"; then
+              echo "Berhasil sempurna dengan patch -p1"
+            else
+              if [ "$ALLOW_REJECTS" = "true" ]; then
+                echo "PERINGATAN: Beberapa hunk gagal dan disimpan sebagai file .rej untuk diperbaiki manual."
+              else
+                echo "Membersihkan sisa patch parsial dan mencoba git apply --3way..."
+                git reset --hard HEAD
+                git clean -fd
+                if ! git apply -p1 --3way --ignore-whitespace "$pfile"; then
+                  echo "Patch gagal diterapkan secara bersih!"
+                  exit 1
+                fi
+              fi
+            fi
+          done
+
+          # Tampilkan daftar file .rej jika ada
+          REJ_FILES=$(find . -name "*.rej")
+          if [ -n "$REJ_FILES" ]; then
+            echo "=== DAFTAR FILE .REJ YANG PERLU DICEK MANUAL ==="
+            echo "$REJ_FILES"
           fi
-          rm -f custom.patch
 
       - name: Commit & Push Changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "feat: apply external patch to ${{ inputs.target_branch }}"
-          branch: ${{ inputs.target_branch }}
+          commit_message: ${{ inputs.commit_message || format('feat: apply patch to {0}', env.TARGET_BRANCH) }}
+          branch: ${{ env.TARGET_BRANCH }}
