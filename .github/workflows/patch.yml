@@ -1,15 +1,15 @@
-name: Apply Patch (Copy-Paste) to Custom Branch
+name: Universal Smart Patch URL (All Platforms)
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: 'Nama branch target (contoh: kernel-4.19, main, dev)'
+        description: 'Branch target (contoh: main, kernel-4.19)'
         required: true
         default: 'main'
         type: string
-      patch_content:
-        description: 'Paste seluruh isi file .patch di sini'
+      patch_url:
+        description: 'URL Patch (GitHub, GitLab, Codeberg, Googlesource, Lore, Pastebin, GDrive, Raw)'
         required: true
         type: string
 
@@ -26,24 +26,85 @@ jobs:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
 
-      - name: Save Patch Content
+      - name: Resolve & Download Patch
+        env:
+          INPUT_URL: ${{ inputs.patch_url }}
         run: |
-          # Mengekstrak input patch langsung dari file JSON event agar tidak terkena limit 128KB env
-          jq -r '.inputs.patch_content' "$GITHUB_EVENT_PATH" > custom.patch
-          echo "Berhasil menyimpan patch ($(wc -l < custom.patch) baris)"
+          URL="${INPUT_URL%/}"
+          IS_BASE64=false
+
+          # 1. GitHub (Blob, Commit, PR, Gist)
+          if [[ "$URL" =~ github\.com/[^/]+/[^/]+/blob/ ]]; then
+            RAW_URL=$(echo "$URL" | sed -E 's|github\.com/([^/]+)/([^/]+)/blob/|raw.githubusercontent.com/\1/\2/|')
+          elif [[ "$URL" =~ github\.com/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pull/[0-9]+)$ ]]; then
+            RAW_URL="${URL}.patch"
+          elif [[ "$URL" =~ gist\.github\.com/[^/]+/[0-9a-fA-F]+$ ]]; then
+            RAW_URL="${URL}/raw"
+
+          # 2. GitLab (Self-hosted maupun gitlab.com)
+          elif [[ "$URL" =~ /-/blob/ ]]; then
+            RAW_URL=$(echo "$URL" | sed -E 's|/-/blob/|/-/raw/|')
+          elif [[ "$URL" =~ /-/commit/[0-9a-fA-F]+$ ]] || [[ "$URL" =~ /-/merge_requests/[0-9]+$ ]]; then
+            RAW_URL="${URL}.patch"
+
+          # 3. Codeberg / Gitea / Forgejo
+          elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/src/ ]]; then
+            RAW_URL=$(echo "$URL" | sed -E 's|/src/|/raw/|')
+          elif [[ "$URL" =~ (codeberg\.org|gitea\.)[^/]+/[^/]+/[^/]+/(commit/[0-9a-fA-F]+|pulls/[0-9]+)$ ]]; then
+            RAW_URL="${URL}.patch"
+
+          # 4. AOSP / Google Gitiles (*.googlesource.com)
+          elif [[ "$URL" =~ \.googlesource\.com/.+/\+/[0-9a-fA-F]+$ ]]; then
+            RAW_URL="${URL}^+!/?format=TEXT"
+            IS_BASE64=true
+
+          # 5. Linux Kernel Mailing List (lore.kernel.org)
+          elif [[ "$URL" =~ lore\.kernel\.org/ ]] && [[ ! "$URL" =~ /raw$ ]]; then
+            RAW_URL="${URL}/raw"
+
+          # 6. Pastebin
+          elif [[ "$URL" =~ pastebin\.com/[a-zA-Z0-9]+$ ]]; then
+            RAW_URL=$(echo "$URL" | sed -E 's|pastebin\.com/|pastebin.com/raw/|')
+
+          # 7. Google Drive (File publik)
+          elif [[ "$URL" =~ drive\.google\.com/file/d/([a-zA-Z0-9_-]+) ]]; then
+            FILE_ID="${BASH_REMATCH[1]}"
+            RAW_URL="https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download"
+
+          # 8. Direct Raw URL (0x0.st, cdn.kernel.org, server pribadi, dll.)
+          else
+            RAW_URL="$URL"
+          fi
+
+          echo "Mengunduh dari: $RAW_URL"
+          if [ "$IS_BASE64" = true ]; then
+            curl -fSL "$RAW_URL" | base64 -d > custom.patch
+          else
+            curl -fSL "$RAW_URL" -o custom.patch
+          fi
+
+          # Validasi: pastikan hasil unduhan bukan halaman HTML (login/404)
+          if head -n 5 custom.patch | grep -qiE '<!DOCTYPE html|<html'; then
+            echo "Error: Tautan menghasilkan halaman HTML, bukan file patch mentah. Pastikan file bersifat publik."
+            exit 1
+          fi
+
+          echo "Berhasil mengunduh patch ($(wc -l < custom.patch) baris)"
 
       - name: Apply Patch
         run: |
           if patch -p1 --forward --batch < custom.patch; then
-            echo "Patch berhasil diaplikasikan menggunakan patch -p1"
+            echo "Sukses dengan patch -p1"
+          elif git apply -p1 --ignore-whitespace custom.patch; then
+            echo "Sukses dengan git apply"
           else
-            echo "Fallback: Memproses menggunakan git apply -p1..."
-            git apply -p1 --ignore-whitespace custom.patch
+            echo "Patch gagal diterapkan!"
+            exit 1
           fi
-          rm custom.patch
+          rm -f custom.patch
 
-      - name: Commit & Push to Custom Branch
+      - name: Commit & Push Changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "feat: apply patch via workflow dispatch"
+          commit_message: "feat: apply external patch to ${{ inputs.target_branch }}"
           branch: ${{ inputs.target_branch }}
