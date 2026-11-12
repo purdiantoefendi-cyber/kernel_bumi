@@ -1,4 +1,4 @@
-name: Universal Smart Patcher
+Name: Universal Smart Patcher
 
 on:
   workflow_dispatch:
