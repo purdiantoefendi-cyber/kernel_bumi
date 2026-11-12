@@ -6,10 +6,11 @@ on:
       runner:
         description: 'Pilih Runner Environment'
         required: true
-        default: 'ubuntu-latest'
+        default: 'ubuntu-24.04'
         type: choice
         options:
           - ubuntu-latest
+          - ubuntu-24.04
           - ubuntu-20.04
           - self-hosted
       branch:
