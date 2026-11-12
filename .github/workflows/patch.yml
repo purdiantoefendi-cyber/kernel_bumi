@@ -1,46 +1,50 @@
-name: Apply Custom Patch & Auto Commit
+name: Apply Patch (Copy-Paste) to Custom Branch
 
 on:
   workflow_dispatch:
     inputs:
-      patch_url:
-        description: 'URL file patch (support link blob GitHub atau raw)'
+      target_branch:
+        description: 'Nama branch target (contoh: kernel-4.19, main, dev)'
         required: true
-        default: 'https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd/blob/dcd789634247c77d8549a42aef232c680a905585/Patches/Patch/susfs_patch_to_4.19.patch'
+        default: 'main'
+        type: string
+      patch_content:
+        description: 'Paste seluruh isi file .patch di sini'
+        required: true
+        type: string
 
 jobs:
-  apply-and-commit:
+  apply-patch:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Target Branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_branch }}
           fetch-depth: 0
 
-      - name: Download & Normalize Patch URL
+      - name: Save Patch Content
+        env:
+          PATCH_TEXT: ${{ inputs.patch_content }}
         run: |
-          # Mengonversi link GitHub blob ke raw.githubusercontent.com jika diperlukan
-          RAW_URL=$(echo "${{ github.event.inputs.patch_url }}" | sed -e 's|github.com/\([^/]*\)/\([^/]*\)/blob/|raw.githubusercontent.com/\1/\2/|')
-          echo "Mengunduh patch dari: $RAW_URL"
-          curl -sSL "$RAW_URL" -o custom.patch
+          # Menyimpan input multiline teks patch ke file tanpa merusak format newline
+          printf "%s\n" "$PATCH_TEXT" > custom.patch
 
       - name: Apply Patch
         run: |
-          # Untuk patch kernel/SUSFS, coba gunakan patch -p1 terlebih dahulu, 
-          # jika gagal akan fallback ke git apply
           if patch -p1 --forward --batch < custom.patch; then
             echo "Patch berhasil diaplikasikan menggunakan patch -p1"
           else
-            echo "Format patch membutuhkan git apply, mencoba git apply -p1..."
+            echo "Fallback: Memproses menggunakan git apply -p1..."
             git apply -p1 --ignore-whitespace custom.patch
           fi
           rm custom.patch
 
-      - name: Commit & Push Changes
+      - name: Commit & Push to Custom Branch
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "feat: apply custom patch from ${{ github.event.inputs.patch_url }}"
-          branch: ${{ github.ref_name }}
+          commit_message: "feat: apply patch via workflow dispatch"
+          branch: ${{ inputs.target_branch }}
