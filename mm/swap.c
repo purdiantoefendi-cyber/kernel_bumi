@@ -42,7 +42,7 @@
 #include <trace/events/pagemap.h>
 
 /* How many pages do we try to swap or page in/out together? */
-int page_cluster;
+int page_cluster = 0; // Wajib 0 untuk ZRAM agar CPU tidak bekerja sia-sia
 
 static DEFINE_PER_CPU(struct pagevec, lru_add_pvec);
 static DEFINE_PER_CPU(struct pagevec, lru_rotate_pvecs);
