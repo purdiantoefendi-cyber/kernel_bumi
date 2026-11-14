@@ -345,6 +345,15 @@ Core features included across all generations of DianTk_Modz Kernel:
 
 ---
 
+# ☕ SUPPORT & DONATION
+
+If you appreciate my work and want to support future kernel development, you can donate via **QRIS** (supports GoPay, OVO, DANA, ShopeePay, LinkAja, and all Indonesian Mobile Banking apps):
+
+<p align="center">
+  <img src="qris.png" width="260" alt="QRIS Donation">
+</p>
+---
+
 # ⚠️ IMPORTANT NOTES
 
 * 📱 This kernel is developed specifically for Xiaomi Redmi 12C (earth).
