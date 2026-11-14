@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="diantk.png" width="260" alt="QRIS Donation">
+  <img src="diantk.png" width="260" alt="DianTk">
 </p>
 # ⚡ DianTk_Modz Kernel V1–V7
 ### 🚀 GAMING EXTREME PERFORMANCE — Redmi 12C (earth)
