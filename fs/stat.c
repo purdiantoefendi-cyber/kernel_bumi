@@ -21,12 +21,6 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
-#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-#include <linux/susfs_def.h>
-extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
-extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
 #include "internal.h"
@@ -120,7 +114,7 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 			}
 			if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
 				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
-			return err;
+				return err;
 			}
 		}
 		return err;
@@ -827,3 +821,4 @@ void inode_set_bytes(struct inode *inode, loff_t bytes)
 }
 
 EXPORT_SYMBOL(inode_set_bytes);
+```[cite: 2]
