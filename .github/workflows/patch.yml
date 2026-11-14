@@ -9,7 +9,7 @@ on:
         default: 'main'
         type: string
       patch_urls:
-        description: 'Satu atau banyak URL patch, pisahkan dengan spasi (GitHub, GitLab, Bitbucket, AOSP, Lore, GDrive, Raw)'
+        description: 'Satu atau banyak URL patch, pisahkan dengan spasi/koma/baris baru (GitHub, GitLab, Bitbucket, AOSP, Lore, GDrive, Raw)'
         required: false
         type: string
       allow_rejects:
@@ -17,8 +17,13 @@ on:
         required: false
         default: true
         type: boolean
+      squash_commits:
+        description: 'Gabungkan semua patch menjadi 1 commit (nonaktifkan untuk 1 commit per patch)'
+        required: false
+        default: true
+        type: boolean
       commit_message:
-        description: 'Pesan commit (opsional)'
+        description: 'Pesan commit (opsional, digunakan jika squash aktif)'
         required: false
         type: string
 
@@ -33,6 +38,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Configure Git Identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Prepare Target Branch
         env:
@@ -51,7 +61,9 @@ jobs:
         env:
           INPUT_URLS: ${{ inputs.patch_urls }}
           ALLOW_REJECTS: ${{ inputs.allow_rejects }}
+          SQUASH_COMMITS: ${{ inputs.squash_commits }}
         run: |
+          set -e
           mkdir -p /tmp/queued_patches
           COUNTER=1
 
@@ -62,19 +74,26 @@ jobs:
             IFS=$'\n' SORTED_LOCAL=($(sort <<<"${LOCAL_FILES[*]}"))
             unset IFS
             for f in "${SORTED_LOCAL[@]}"; do
-              cp "$f" "/tmp/queued_patches/$(printf '%03d' $COUNTER)_$(basename "$f")"
+              DEST="/tmp/queued_patches/$(printf '%03d' $COUNTER)_$(basename "$f")"
+              cp "$f" "$DEST"
+              sed -i 's/\r$//' "$DEST"
               rm -f "$f"
               COUNTER=$((COUNTER + 1))
             done
           fi
 
-          # 2. Unduh patch dari URL (jika diisi)
+          # 2. Unduh semua patch dari URL (mendukung pemisah spasi, koma, titik koma, dan newline)
           if [ -n "$INPUT_URLS" ]; then
-            URLS=$(echo "$INPUT_URLS" | tr ',' ' ')
+            URLS=$(printf '%s' "$INPUT_URLS" | tr ',;\n\r\t' ' ')
             for raw_input in $URLS; do
-              URL="${raw_input%/}"
+              URL="${raw_input%%#*}"
+              URL="${URL%/}"
+              [ -z "$URL" ] && continue
+
               IS_BASE64=false
-              OUT_FILE="/tmp/queued_patches/$(printf '%03d' $COUNTER)_remote.patch"
+              SLUG=$(basename "$URL" | tr -cd 'a-zA-Z0-9._-' | cut -c1-40)
+              [ -z "$SLUG" ] && SLUG="remote"
+              OUT_FILE="/tmp/queued_patches/$(printf '%03d' $COUNTER)_${SLUG}.patch"
 
               if [[ "$URL" =~ github\.com/[^/]+/[^/]+/blob/ ]]; then
                 RAW_URL=$(echo "$URL" | sed -E 's|github\.com/([^/]+)/([^/]+)/blob/|raw.githubusercontent.com/\1/\2/|')
@@ -108,59 +127,121 @@ jobs:
                 RAW_URL="$URL"
               fi
 
-              echo "Mengunduh: $RAW_URL"
+              echo "Mengunduh [$COUNTER]: $RAW_URL"
               if [ "$IS_BASE64" = true ]; then
-                curl -fSL "$RAW_URL" | base64 -d > "$OUT_FILE"
+                if ! curl -fsSL "$RAW_URL" | base64 -d > "$OUT_FILE"; then
+                  echo "Error: Gagal mengunduh atau decode base64 dari $URL"
+                  exit 1
+                fi
               else
-                curl -fSL "$RAW_URL" -o "$OUT_FILE"
+                if ! curl -fsSL "$RAW_URL" -o "$OUT_FILE"; then
+                  echo "Error: Gagal mengunduh patch dari $URL"
+                  exit 1
+                fi
               fi
 
-              if head -n 10 "$OUT_FILE" | grep -qiE '<!DOCTYPE html|<html'; then
-                echo "Error: Tautan $URL menghasilkan halaman HTML, bukan patch."
+              if [ ! -s "$OUT_FILE" ]; then
+                echo "Error: File patch dari $URL kosong."
                 exit 1
               fi
 
+              if head -n 15 "$OUT_FILE" | grep -qiE '<!DOCTYPE html|<html'; then
+                echo "Error: Tautan $URL menghasilkan halaman HTML, bukan file patch."
+                exit 1
+              fi
+
+              # Normalisasi CRLF -> LF
+              sed -i 's/\r$//' "$OUT_FILE"
               COUNTER=$((COUNTER + 1))
             done
           fi
 
-          # 3. Eksekusi semua patch yang terkumpul
+          # 3. Validasi antrean patch
           PATCH_FILES=(/tmp/queued_patches/*.patch /tmp/queued_patches/*.diff)
           if [ ${#PATCH_FILES[@]} -eq 0 ]; then
             echo "Error: Tidak ada URL patch yang diisi dan tidak ada file di folder patches/."
             exit 1
           fi
 
+          echo "Total patch dalam antrean: ${#PATCH_FILES[@]}"
+          BASE_COMMIT=$(git rev-parse HEAD)
+          APPLIED_SUMMARY=""
+
+          # 4. Eksekusi patch satu per satu dengan isolasi rollback
           for pfile in "${PATCH_FILES[@]}"; do
             [ -e "$pfile" ] || continue
-            echo "=== Menerapkan $(basename "$pfile") ==="
+            PNAME=$(basename "$pfile")
+            PBASE="${PNAME%.*}"
+            echo "=========================================="
+            echo "Menerapkan: $PNAME"
+            echo "=========================================="
 
-            if patch -p1 --fuzz=3 --forward --batch < "$pfile"; then
-              echo "Berhasil sempurna dengan patch -p1"
+            # Ambil subjek patch jika format git format-patch, atau gunakan nama file
+            PATCH_TITLE=$(grep -m1 '^Subject:' "$pfile" | sed -E 's/^Subject:\s*(\[PATCH[^\]]*\]\s*)?//' || true)
+            [ -z "$PATCH_TITLE" ] && PATCH_TITLE="chore: apply $PNAME"
+
+            # Deteksi strip level (-p1 jika standar git diff a/ b/, atau -p0 jika tanpa prefix)
+            STRIP_LEVEL="-p1"
+            if ! grep -qE '^(---|\+\+\+) (a|b)/' "$pfile"; then
+              STRIP_LEVEL="-p0"
+            fi
+
+            if patch "$STRIP_LEVEL" --fuzz=3 --forward --batch --no-backup-if-mismatch < "$pfile"; then
+              echo "[OK] Berhasil sempurna dengan patch $STRIP_LEVEL"
+              APPLIED_SUMMARY="${APPLIED_SUMMARY}- ${PNAME} (clean)\n"
             else
               if [ "$ALLOW_REJECTS" = "true" ]; then
-                echo "PERINGATAN: Beberapa hunk gagal dan disimpan sebagai file .rej untuk diperbaiki manual."
+                echo "[WARN] Sebagian hunk gagal dan disimpan ke file .rej"
+                # Rename .rej baru agar tidak tertimpa oleh patch berikutnya
+                while IFS= read -r rej; do
+                  mv "$rej" "${rej}.${PBASE}"
+                done < <(find . -name "*.rej" -not -path "./.git/*")
+                APPLIED_SUMMARY="${APPLIED_SUMMARY}- ${PNAME} (with .rej conflicts)\n"
               else
-                echo "Membersihkan sisa patch parsial dan mencoba git apply --3way..."
+                echo "[RETRY] Membersihkan sisa patch ini dan mencoba git apply --3way..."
                 git reset --hard HEAD
                 git clean -fd
-                if ! git apply -p1 --3way --ignore-whitespace "$pfile"; then
-                  echo "Patch gagal diterapkan secara bersih!"
+                if git apply "$STRIP_LEVEL" --3way --ignore-whitespace "$pfile"; then
+                  echo "[OK] Berhasil dengan git apply --3way"
+                  APPLIED_SUMMARY="${APPLIED_SUMMARY}- ${PNAME} (3-way merge)\n"
+                else
+                  echo "[FAIL] Patch $PNAME gagal diterapkan secara bersih!"
                   exit 1
                 fi
               fi
             fi
+
+            # Simpan progress patch ini ke commit sementara agar aman dari reset patch berikutnya
+            git add -A
+            if ! git diff --cached --quiet; then
+              git commit -m "$PATCH_TITLE"
+            fi
           done
 
-          # Tampilkan daftar file .rej jika ada
-          REJ_FILES=$(find . -name "*.rej")
+          echo "=========================================="
+          echo "RINGKASAN EKSEKUSI PATCH:"
+          printf "%b" "$APPLIED_SUMMARY"
+
+          # Tampilkan semua file .rej jika ada
+          REJ_FILES=$(find . -name "*.rej*" -not -path "./.git/*")
           if [ -n "$REJ_FILES" ]; then
             echo "=== DAFTAR FILE .REJ YANG PERLU DICEK MANUAL ==="
             echo "$REJ_FILES"
           fi
 
-      - name: Commit & Push Changes
+          # Jika mode squash aktif, kembalikan ke BASE_COMMIT (soft) agar digabung oleh action berikutnya
+          if [ "$SQUASH_COMMITS" = "true" ]; then
+            git reset --soft "$BASE_COMMIT"
+          fi
+
+      - name: Commit & Push Changes (Squash Mode)
+        if: ${{ inputs.squash_commits }}
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "${{ inputs.commit_message || format('feat: apply patch to {0}', env.TARGET_BRANCH) }}"
+          commit_message: "${{ inputs.commit_message || format('feat: apply patches to {0}', env.TARGET_BRANCH) }}"
           branch: ${{ env.TARGET_BRANCH }}
+
+      - name: Push Individual Commits
+        if: ${{ !inputs.squash_commits }}
+        run: |
+          git push origin "$TARGET_BRANCH"
