@@ -334,7 +334,7 @@ Core features included across all generations of DianTk_Modz Kernel:
 | 🌐 BBR Plus Default | V7 |
 | 🏷️ Fake Uname 5.10 | V7 |
 | 🔄 HyperOS 4 Port Support | V7 |
-| 🚫 Without KSU / BakaSU | V6, V7 *(OC Variant)* |
+| 🚫 Without KSU | V6, V7 *(OC Variant)* |
 | 🛡️ KSU / BakaSU + SUSFS 2.4 | V7 *(OC & Non-OC Variants)* |
 | ⚖️ Non-Overclock Variant | V7 |
 
