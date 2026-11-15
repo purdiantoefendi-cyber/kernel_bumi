@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="diantk.png" width="260" alt="DianTk">
+  <img src="https://raw.githubusercontent.com/purdiantoefendi-cyber/kernel_bumi/refs/heads/main/diantk.png" width="260" alt="DianTk">
 </p>
 
 # ⚡ DianTk_Modz Kernel V1–V7
@@ -309,7 +309,7 @@ Core features included across all generations of DianTk_Modz Kernel:
 * HyperOS 4 Port Support
 
 ### 🛡️ KERNELSU / BAKASU & SUSFS
-* **Without KSU / BakaSU** variant available (Non-KSU Build)
+* **Without KSU** variant available (Non-KSU Build)
 * **With KSU / BakaSU + SUSFS 2.4** variants available (for both Overclock and Non-Overclock options)
 
 🤖 **Android Support: 13–17**
@@ -354,7 +354,7 @@ Core features included across all generations of DianTk_Modz Kernel:
 If you appreciate my work and want to support future kernel development, you can donate via **QRIS** (supports GoPay, OVO, DANA, ShopeePay, LinkAja, and all Indonesian Mobile Banking apps):
 
 <p align="center">
-  <img src="qris.png" width="260" alt="QRIS Donation">
+  <img src="https://raw.githubusercontent.com/purdiantoefendi-cyber/kernel_bumi/refs/heads/main/qris.png" width="260" alt="QRIS Donation">
 </p>
 ---
 
