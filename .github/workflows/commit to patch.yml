@@ -1,20 +1,10 @@
-name: Multi-Commit to Single Patch
+name: GitHub Commit URLs to Single Patch
 
 on:
   workflow_dispatch:
     inputs:
-      target_repo:
-        description: 'Repo target (format: owner/repo, kosongkan untuk repo ini)'
-        required: false
-        default: ''
-        type: string
-      target_branch:
-        description: 'Branch target (kosongkan untuk branch default repo)'
-        required: false
-        default: ''
-        type: string
-      commit_hashes:
-        description: 'Daftar hash commit (pisahkan dengan spasi atau koma, berurutan)'
+      commit_urls:
+        description: 'Link commit GitHub (pisahkan dengan spasi atau koma jika banyak)'
         required: true
         type: string
       patch_name:
@@ -24,55 +14,77 @@ on:
         type: string
 
 jobs:
-  generate-single-patch:
+  generate-patch-from-urls:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare Parameters
-        id: params
+      - name: Parse URLs & Combine Commits into Single Patch
+        env:
+          COMMIT_URLS: ${{ inputs.commit_urls }}
+          PATCH_NAME: ${{ inputs.patch_name }}
+          CUSTOM_GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          DEFAULT_TOKEN: ${{ github.token }}
+          CURRENT_REPO: ${{ github.repository }}
         run: |
-          REPO="${{ inputs.target_repo }}"
-          [ -z "$REPO" ] && REPO="${{ github.repository }}"
-          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          mkdir -p output repos
 
-          NAME="${{ inputs.patch_name }}"
+          NAME="$PATCH_NAME"
           [[ "$NAME" != *.patch ]] && NAME="${NAME}.patch"
-          echo "filename=$NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout Target Repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ steps.params.outputs.repo }}
-          ref: ${{ inputs.target_branch }}
-          token: ${{ secrets.GH_TOKEN || github.token }}
-          fetch-depth: 0
-
-      - name: Combine Multiple Commits into One Patch
-        run: |
-          mkdir -p output
-          OUT_FILE="output/${{ steps.params.outputs.filename }}"
+          OUT_FILE="output/$NAME"
           : > "$OUT_FILE"
 
           # Ubah pemisah koma atau baris baru menjadi spasi
-          HASH_LIST=$(echo "${{ inputs.commit_hashes }}" | tr ',\r\n' ' ')
+          URL_LIST=$(echo "$COMMIT_URLS" | tr ',\r\n' ' ')
           COUNT=0
 
-          for HASH in $HASH_LIST; do
-            FULL_HASH=$(git rev-parse --verify "${HASH}^{commit}" 2>/dev/null) || {
-              echo "Error: Commit '$HASH' tidak ditemukan di ${{ steps.params.outputs.repo }}"
+          for RAW_URL in $URL_LIST; do
+            # Hapus parameter query (?w=1), anchor (#diff-...), dan ekstensi .patch/.diff
+            CLEAN_URL="${RAW_URL%%[\?#]*}"
+            CLEAN_URL="${CLEAN_URL%.patch}"
+            CLEAN_URL="${CLEAN_URL%.diff}"
+
+            if [[ "$CLEAN_URL" =~ ^https?://github\.com/([^/]+/[^/]+)/(commit|pull/[0-9]+/commits)/([0-9a-fA-F]{7,40})/?$ ]]; then
+              REPO="${BASH_REMATCH[1]}"
+              HASH="${BASH_REMATCH[3]}"
+            else
+              echo "Error: Format URL commit tidak valid -> $RAW_URL"
+              exit 1
+            fi
+
+            REPO_DIR="repos/${REPO//\//__}"
+
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              git init -q "$REPO_DIR"
+              if [ -n "$CUSTOM_GH_TOKEN" ]; then
+                REMOTE_URL="https://x-access-token:${CUSTOM_GH_TOKEN}@github.com/${REPO}.git"
+              elif [ "$REPO" = "$CURRENT_REPO" ]; then
+                REMOTE_URL="https://x-access-token:${DEFAULT_TOKEN}@github.com/${REPO}.git"
+              else
+                REMOTE_URL="https://github.com/${REPO}.git"
+              fi
+              git -C "$REPO_DIR" remote add origin "$REMOTE_URL"
+            fi
+
+            # Fetch spesifik commit + parent-nya saja agar cepat (hemat bandwidth)
+            if ! git -C "$REPO_DIR" fetch -q --depth=2 origin "$HASH" 2>/dev/null; then
+              git -C "$REPO_DIR" fetch -q --filter=blob:none origin
+            fi
+
+            FULL_HASH=$(git -C "$REPO_DIR" rev-parse --verify "${HASH}^{commit}" 2>/dev/null) || {
+              echo "Error: Commit '$HASH' tidak ditemukan di '$REPO'"
               exit 1
             }
 
             COUNT=$((COUNT + 1))
-            echo "[$COUNT] Menggabungkan: $FULL_HASH - $(git log -1 --pretty=format:'%s' "$FULL_HASH")"
-            git format-patch -1 "$FULL_HASH" --stdout >> "$OUT_FILE"
+            echo "[$COUNT] ($REPO) $FULL_HASH - $(git -C "$REPO_DIR" log -1 --pretty=format:'%s' "$FULL_HASH")"
+            git -C "$REPO_DIR" format-patch -1 "$FULL_HASH" --stdout >> "$OUT_FILE"
           done
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "Error: Tidak ada hash commit yang diproses."
+            echo "Error: Tidak ada URL commit yang diproses."
             exit 1
           fi
 
-          echo "Berhasil menggabungkan $COUNT commit ke $OUT_FILE"
+          echo "Selesai! $COUNT commit digabungkan ke $OUT_FILE"
           ls -lh "$OUT_FILE"
 
       - name: Upload Patch Artifact
