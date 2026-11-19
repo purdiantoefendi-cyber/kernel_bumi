@@ -3760,7 +3760,7 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long max_seq,
 		goto done;
 	}
 
-	walk = set_mm_walk(NULL);
+	walk = alloc_mm_walk();
 	if (!walk) {
 		success = iterate_mm_list_nowalk(lruvec, max_seq);
 		goto done;
@@ -3829,19 +3829,15 @@ static long get_nr_evictable(struct lruvec *lruvec, unsigned long max_seq,
 		}
 	}
 
-	/* Try to reclaim all memory from an offlined memcg. */
-	*nr_to_scan = mem_cgroup_online(memcg) ? total >> sc->priority : total;
-
 	/*
 	 * The aging tries to be lazy to reduce the overhead, while the eviction
 	 * stalls when the number of generations reaches MIN_NR_GENS. Hence, the
 	 * ideal number of generations is MIN_NR_GENS+1.
 	 */
 	if (min_seq[!can_swap] + MIN_NR_GENS > max_seq)
-		return true;
-	if (min_seq[!can_swap] + MIN_NR_GENS < max_seq)
-		return false;
-
+		*need_aging = true;
+	else if (min_seq[!can_swap] + MIN_NR_GENS < max_seq)
+		*need_aging = false;
 	/*
 	 * It's also ideal to spread pages out evenly, i.e., 1/(MIN_NR_GENS+1)
 	 * of the total number of pages for each generation. A reasonable range
@@ -3849,12 +3845,14 @@ static long get_nr_evictable(struct lruvec *lruvec, unsigned long max_seq,
 	 * aging cares about the upper bound of hot pages, while the eviction
 	 * cares about the lower bound of cold pages.
 	 */
-	if (young * MIN_NR_GENS > total)
-		return true;
-	if (old * (MIN_NR_GENS + 2) < total)
-		return true;
+	else if (young * MIN_NR_GENS > total)
+		*need_aging = true;
+	else if (old * (MIN_NR_GENS + 2) < total)
+		*need_aging = true;
+	else
+		*need_aging = false;
 
-	return false;
+	return total;
 }
 
 static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
@@ -3873,8 +3871,9 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 	if (prot == MEMCG_PROT_MIN)
 		return false;
 
-	need_aging = should_run_aging(lruvec, max_seq, min_seq, sc, swappiness,
-				     &nr_to_scan);
+	nr_to_scan = get_nr_evictable(lruvec, max_seq, min_seq, swappiness, &need_aging);
+	if (mem_cgroup_online(memcg))
+		nr_to_scan >>= sc->priority;
 
 	if (min_ttl) {
 		int gen = lru_gen_from_seq(min_seq[LRU_GEN_FILE]);
@@ -3884,7 +3883,7 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 			return false;
 
 		/* The size is likely too small to be helpful. */
-		if (!nr_to_scan && sc->priority != DEF_PRIORITY)
+		if (!nr_to_scan && sc->priority != cekDEF_PRIORITY)
 			return false;
 	}
 
@@ -3917,7 +3916,7 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 		return;
 	}
 
-	set_mm_walk(pgdat);
+	current->reclaim_state->mm_walk = &pgdat->mm_walk;
 
 	memcg = mem_cgroup_iter(NULL, NULL, NULL);
 	do {
@@ -3929,7 +3928,7 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 		cond_resched();
 	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
 
-	clear_mm_walk();
+	current->reclaim_state->mm_walk = NULL;
 
 	/*
 	 * The main goal is to OOM kill if every generation from all memcgs is
@@ -4457,7 +4456,6 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	struct blk_plug plug;
 	long scanned = 0;
 	bool need_aging = false;
-	bool swapped = false;
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
 
 	lru_add_drain();
@@ -4483,12 +4481,9 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 		if (!nr_to_scan)
 			goto done;
 
-		delta = evict_pages(lruvec, sc, swappiness, &swapped);
+		delta = evict_pages(lruvec, sc, swappiness, NULL);
 		if (!delta)
 			goto done;
-
-		if (sc->memcgs_avoid_swapping && swappiness < 200 && swapped)
-			break;
 
 		scanned += delta;
 		if (scanned >= nr_to_scan)
@@ -4499,8 +4494,6 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 
 	if (!need_aging)
 		sc->memcgs_need_aging = false;
-	if (!swapped)
-		sc->memcgs_need_swapping = false;
 done:
 	if (current_is_kswapd())
 		current->reclaim_state->mm_walk = NULL;
@@ -5039,7 +5032,8 @@ static ssize_t lru_gen_seq_write(struct file *file, const char __user *src,
 	current->reclaim_state = &rs;
 	flags = memalloc_noreclaim_save();
 	blk_start_plug(&plug);
-	if (!set_mm_walk(NULL)) {
+	rs.mm_walk = alloc_mm_walk();
+	if (!rs.mm_walk) {
 		err = -ENOMEM;
 		goto done;
 	}
@@ -5071,7 +5065,7 @@ static ssize_t lru_gen_seq_write(struct file *file, const char __user *src,
 	}
 
 done:
-	clear_mm_walk();
+	kfree(rs.mm_walk);
 	blk_finish_plug(&plug);
 	memalloc_noreclaim_restore(flags);
 	current->reclaim_state = NULL;
