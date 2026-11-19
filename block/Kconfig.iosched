@@ -14,7 +14,7 @@ config IOSCHED_NOOP
 	  the kernel.
 
 config IOSCHED_DEADLINE
-	tristate "Deadline I/O scheduler"
+	bool "Deadline I/O scheduler"
 	default y
 	help
 	  The deadline I/O scheduler is simple and compact. It will provide
@@ -81,7 +81,7 @@ config MQ_IOSCHED_KYBER
 	  goal.
 
 config IOSCHED_BFQ
-	tristate "BFQ I/O scheduler"
+	bool "BFQ I/O scheduler"
 	default n
 	help
 	BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
