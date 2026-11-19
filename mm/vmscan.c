@@ -3686,7 +3686,7 @@ next:
 	return success;
 }
 
-static void inc_max_seq(struct lruvec *lruvec, bool can_swap, bool force_scan)
+static void inc_max_seq(struct lruvec *lruvec)
 {
 	int prev, next;
 	int type, zone;
@@ -3697,18 +3697,7 @@ static void inc_max_seq(struct lruvec *lruvec, bool can_swap, bool force_scan)
 
 	VM_WARN_ON_ONCE(!seq_is_valid(lruvec));
 
-	for (type = ANON_AND_FILE - 1; type >= 0; type--) {
-		if (get_nr_gens(lruvec, type) != MAX_NR_GENS)
-			continue;
-
-		VM_WARN_ON_ONCE(!force_scan && (type == LRU_GEN_FILE || can_swap));
-
-		while (!inc_min_seq(lruvec, type, can_swap)) {
-			spin_unlock_irq(&pgdat->lru_lock);
-			cond_resched();
-			spin_lock_irq(&pgdat->lru_lock);
-		}
-	}
+	inc_min_seq(lruvec);
 
 	/*
 	 * Update the active/inactive LRU sizes for compatibility. Both sides of
