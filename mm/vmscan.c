@@ -3883,7 +3883,7 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 			return false;
 
 		/* The size is likely too small to be helpful. */
-		if (!nr_to_scan && sc->priority != cekDEF_PRIORITY)
+		if (!nr_to_scan && sc->priority != DEF_PRIORITY)
 			return false;
 	}
 
