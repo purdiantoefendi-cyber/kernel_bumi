@@ -3208,6 +3208,8 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	RB_CLEAR_NODE(&p->pushable_dl_tasks);
 #endif
 	return 0;
+}
+
 void sched_post_fork(struct task_struct *p)
 {
 #ifdef CONFIG_SCHED_BORE
@@ -3215,7 +3217,6 @@ void sched_post_fork(struct task_struct *p)
 #endif // CONFIG_SCHED_BORE
 }
 
-}
 
 u64 to_ratio(u64 period, u64 runtime)
 {
