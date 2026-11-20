@@ -2285,7 +2285,7 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 		eem-initmon-little = <0xf>;
 		eem-initmon-big = <0xf>;
 		eem-initmon-cci = <0xf>;
-		eem-initmon-gpu = <0xf>;
+		eem-initmon-gpu = <0x0>;
 		eem-clamp-little = <0>;
 		eem-clamp-big = <0>;
 		eem-clamp-cci = <0>;
@@ -4341,3 +4341,13 @@ defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
 #ifdef CONFIG_MTK_ENABLE_GENIEZONE
 #include "mediatek/trusty.dtsi"
 #endif
+
+&mt_pmic_vproc12_buck_reg {
+	regulator-min-microvolt = <550000>;
+	regulator-max-microvolt = <1000000>;
+};
+
+&mt_pmic_vsram_proc12_ldo_reg {
+	regulator-min-microvolt = <650000>;
+	regulator-max-microvolt = <1100000>;
+};
