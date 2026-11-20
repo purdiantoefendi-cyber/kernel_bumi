@@ -140,7 +140,7 @@
  **************************************************/
 #define POST_DIV_2_MAX_FREQ			(1900000)
 #define POST_DIV_2_MIN_FREQ			(750000)
-#define POST_DIV_4_MAX_FREQ			(950000)
+#define POST_DIV_4_MAX_FREQ			(750000)	/* Selaraskan dengan POST_DIV_2_MIN_FREQ */
 #define POST_DIV_4_MIN_FREQ			(375000)
 #define POST_DIV_8_MAX_FREQ			(475000)
 #define POST_DIV_8_MIN_FREQ			(187500)
@@ -161,8 +161,8 @@
 #define GPU_ACT_REF_POWER			(1285)		/* mW  */
 #define GPU_ACT_REF_FREQ			(900000)	/* KHz */
 #define GPU_ACT_REF_VOLT			(90000)		/* mV x 100 */
-#define GPU_DVFS_PTPOD_DISABLE_VOLT	(80000)		/* mV x 100 */
-#define GPU_DVFS_PTPOD_DISABLE_VSRAM_VOLT (90000)
+#define GPU_DVFS_PTPOD_DISABLE_VOLT		(95000)		/* 950 mV (cegah drop ke 800 mV saat EEM GPU OFF) */
+#define GPU_DVFS_PTPOD_DISABLE_VSRAM_VOLT	(105000)	/* 1050 mV (jaga selisih +100 mV di atas Vgpu) */
 
 /**************************************************
  * Log Setting
