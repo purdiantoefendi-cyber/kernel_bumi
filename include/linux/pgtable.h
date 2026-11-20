@@ -1130,19 +1130,6 @@ static inline bool arch_has_pfn_modify_check(void)
 # define PAGE_KERNEL_EXEC PAGE_KERNEL
 #endif
 
-#ifndef arch_has_hw_pte_young
-/*
- * Return whether the accessed bit is supported on the local CPU.
- *
- * This stub assumes accessing through an old PTE triggers a page fault.
- * Architectures that automatically set the access bit should overwrite it.
- */
-static inline bool arch_has_hw_pte_young(void)
-{
-	return false;
-}
-#endif
-
 #endif /* !__ASSEMBLY__ */
 
 #if !defined(MAX_POSSIBLE_PHYSMEM_BITS) && !defined(CONFIG_64BIT)
