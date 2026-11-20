@@ -3838,13 +3838,6 @@ static long get_nr_evictable(struct lruvec *lruvec, unsigned long max_seq,
 		*need_aging = true;
 	else if (min_seq[!can_swap] + MIN_NR_GENS < max_seq)
 		*need_aging = false;
-	/*
-	 * It's also ideal to spread pages out evenly, i.e., 1/(MIN_NR_GENS+1)
-	 * of the total number of pages for each generation. A reasonable range
-	 * for this average portion is [1/MIN_NR_GENS, 1/(MIN_NR_GENS+2)]. The
-	 * aging cares about the upper bound of hot pages, while the eviction
-	 * cares about the lower bound of cold pages.
-	 */
 	else if (young * MIN_NR_GENS > total)
 		*need_aging = true;
 	else if (old * (MIN_NR_GENS + 2) < total)
@@ -3852,7 +3845,21 @@ static long get_nr_evictable(struct lruvec *lruvec, unsigned long max_seq,
 	else
 		*need_aging = false;
 
-	return total;
+	return total > 0 ? total : 0;
+}
+
+static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+			     unsigned long *min_seq, struct scan_control *sc,
+			     bool can_swap, long *nr_to_scan)
+{
+	bool need_aging;
+	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+	long total = get_nr_evictable(lruvec, max_seq, min_seq, can_swap, &need_aging);
+
+	/* Try to reclaim all memory from an offlined memcg. */
+	*nr_to_scan = mem_cgroup_online(memcg) ? total >> sc->priority : total;
+
+	return need_aging;
 }
 
 static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
@@ -3871,9 +3878,8 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 	if (prot == MEMCG_PROT_MIN)
 		return false;
 
-	nr_to_scan = get_nr_evictable(lruvec, max_seq, min_seq, swappiness, &need_aging);
-	if (mem_cgroup_online(memcg))
-		nr_to_scan >>= sc->priority;
+	need_aging = should_run_aging(lruvec, max_seq, min_seq, sc, swappiness,
+				     &nr_to_scan);
 
 	if (min_ttl) {
 		int gen = lru_gen_from_seq(min_seq[LRU_GEN_FILE]);
@@ -4456,6 +4462,7 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	struct blk_plug plug;
 	long scanned = 0;
 	bool need_aging = false;
+	bool swapped = false;
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
 
 	lru_add_drain();
@@ -4481,7 +4488,7 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 		if (!nr_to_scan)
 			goto done;
 
-		delta = evict_pages(lruvec, sc, swappiness, NULL);
+		delta = evict_pages(lruvec, sc, swappiness, &swapped);
 		if (!delta)
 			goto done;
 
