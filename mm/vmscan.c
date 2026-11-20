@@ -43,19 +43,6 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/memcontrol.h>
-
-/*
- * 4.19 主线还没有 arch_has_hw_pte_young()。MGLRU 用它判断硬件是否自动置
- * accessed 位；不确定时返回 false 最保守 —— MGLRU 会退回 lru_gen_look_around()
- * 用软件方式扫少量 PTE，功能正确，只是不如硬件辅助高效。
- * arm64 上后续若要优化，可在 arch 里 #define arch_has_hw_pte_young() true。
- */
-#ifndef arch_has_hw_pte_young
-static inline bool arch_has_hw_pte_young(void)
-{
-	return false;
-}
-#endif
 #include <linux/delayacct.h>
 #include <linux/sysctl.h>
 #include <linux/oom.h>
