@@ -1527,17 +1527,23 @@ static void get_volt_table_in_thread(struct eem_det *det)
 #endif
 
 #ifdef CONFIG_THERMAL
-	/* eem_debug("eem_set_eem_volt cur_temp = %d, valid = %d\n", */
+	/* eem_debug("eem_set_eem_volt cur_temp = %d, valid = %d\\n", */
 	/* det->temp, tscpu_is_temp_valid()); */
 	/* 6250 * 10uV = 62.5mv */
 	if (ndet->temp <= INVERT_TEMP_VAL || !tscpu_is_temp_valid())
-#else
-	if (ndet->temp <= INVERT_TEMP_VAL)
-#endif
 		ndet->isTempInv = 1;
-
 	else if ((det->isTempInv) && (ndet->temp > OVER_INV_TEM_VAL))
 		ndet->isTempInv = 0;
+#else
+	/*
+	 * Without CONFIG_THERMAL there is no trustworthy temperature input.
+	 * Do not interpret an uninitialized/zero temperature as 0C: that
+	 * would add the cold-temperature GPU voltage margin on every update.
+	 */
+	ndet->isTempInv = 0;
+	ndet->isHighTemp = 0;
+	ndet->low_temp_off = 0;
+#endif
 
 	if (ndet->ctrl_id == EEM_CTRL_GPU) {
 		if (ndet->isTempInv) {

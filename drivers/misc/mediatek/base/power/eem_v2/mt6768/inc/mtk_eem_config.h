@@ -200,8 +200,8 @@ enum mt_cpu_dvfs_id {
 /* common part: for  LL, L */
 #define VBOOT_PMIC_VAL	(80000)
 #define VBOOT_PMIC_CLR	(0)
-#define VBOOT_VAL		(0x6C) /* 0.875v - cegah drop
-#define VMAX_VAL		(0x94) /* volt domain: 1.11875v*/
+#define VBOOT_VAL		(0x6C) /* 0.875v - cegah drop */
+#define VMAX_VAL		(0x94) /* volt domain: 1.11875v */
 #define VMIN_VAL		(0x48) /* volt domain: 0.631v*/
 #define VCO_VAL			(0x40)
 #define DVTFIXED_VAL	(0x4)
