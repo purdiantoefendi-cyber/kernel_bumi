@@ -1845,9 +1845,10 @@ static void __mt_gpufreq_clock_switch(unsigned int freq_new)
 	if (g_parking) {
 		/* mfgpll_ck to syspll_d3 */
 		__mt_gpufreq_switch_to_clksrc(CLOCK_SUB);
+		udelay(10); /* Allow the parking clock mux to settle before PLL update */
 		/* dds = GPUPLL_CON1[21:0], POST_DIVIDER = GPUPLL_CON1[24:26] */
 		DRV_WriteReg32(GPUPLL_CON1, (0x80000000) | (post_divider_power << POST_DIV_SHIFT) | dds);
-		udelay(20);
+		udelay(20); /* Wait for GPUPLL to settle before switching back */
 		/* syspll_d3 to mfgpll_ck */
 		__mt_gpufreq_switch_to_clksrc(CLOCK_MAIN);
 		g_parking = false;
@@ -2007,6 +2008,7 @@ static void __mt_gpufreq_bucks_enable(void)
 			return;
 		}
 	}
+	udelay(50); /* Let VSRAM_GPU settle before enabling VGPU */
 
 #ifdef MT_GPUFREQ_SRAM_DEBUG
 	aee_rr_rec_gpu_dvfs_status(0x20 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
@@ -2019,6 +2021,7 @@ static void __mt_gpufreq_bucks_enable(void)
 			return;
 		}
 	}
+	udelay(100); /* Allow VGPU to settle before GPU/display access */
 
 #ifdef MT_GPUFREQ_SRAM_DEBUG
 	aee_rr_rec_gpu_dvfs_status(0x30 | (aee_rr_curr_gpu_dvfs_status() & 0x0F));
