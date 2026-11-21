@@ -262,7 +262,7 @@ static int get_devinfo(void)
 	efuse_val = get_devinfo_with_index(GPU_VB_IDX) & 0x7;
 	if (efuse_val && efuse_val <= 3) {
 		gpu_vb_volt = gpu_vb[efuse_val - 1];
-		gpu_vb_flag = 1;
+		gpu_vb_flag = 0;
 
 	} else
 		gpu_vb_flag = 0;
