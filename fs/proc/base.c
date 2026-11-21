@@ -1218,6 +1218,14 @@ static ssize_t oom_score_adj_write(struct file *file, const char __user *buf,
 		goto out;
 	}
 
+	/*
+	 * HACK EXTREME MULTITASKING:
+	 * Batasi oom_score_adj positif maksimal ke 300 agar aplikasi background
+	 * tidak mudah di-kill oleh LMKD / OOM Killer.
+	 */
+	if (oom_score_adj > 300)
+		oom_score_adj = 300;
+
 	err = __set_oom_adj(file, oom_score_adj, false);
 out:
 	return err < 0 ? err : count;
