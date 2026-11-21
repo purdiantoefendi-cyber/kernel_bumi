@@ -139,7 +139,7 @@ enum mt_cpu_dvfs_id {
  ******************************************
  */
 #define NR_HW_RES_FOR_BANK	(12) /* real eem banks for efuse */
-#define EEM_INIT01_FLAG (0x0f) /* 0x0f=> [3]:GPU, [2]:CCI, [1]:B, [0]:L */
+#define EEM_INIT01_FLAG (0x07) /* 0x07=> [3]:GPU OFF, [2]:CCI, [1]:B, [0]:L */
 #define EEM_CORNER_FLAG (0x30) /* 0x30=> [5]:VPU, [4]:MDLA */
 #if 0
 #if ENABLE_LOO
@@ -200,7 +200,7 @@ enum mt_cpu_dvfs_id {
 /* common part: for  LL, L */
 #define VBOOT_PMIC_VAL	(80000)
 #define VBOOT_PMIC_CLR	(0)
-#define VBOOT_VAL		(0x60) /* volt domain: 0.8v */
+#define VBOOT_VAL		(0x6C) /* 0.875v - cegah drop
 #define VMAX_VAL		(0x94) /* volt domain: 1.11875v*/
 #define VMIN_VAL		(0x48) /* volt domain: 0.631v*/
 #define VCO_VAL			(0x40)
@@ -230,8 +230,8 @@ enum mt_cpu_dvfs_id {
 
 /* different for GPU */
 #define VMAX_VAL_GPU                    (0x94) /* eem domain: 1.11875v*/
-#define VMIN_VAL_GPU                    (0x42) /* eem domain: 0.6125v*/
-#define VCO_VAL_GPU                     (0x40) /* eem domain: 0.575v*/
+#define VMIN_VAL_GPU                    (0x6C) /* eem domain: 0.875v (anti-undervolt OC) */
+#define VCO_VAL_GPU                     (0x6C) /* eem domain: 0.875v (anti-undervolt OC) */
 
 /* different for GPU_L */
 #define VMAX_VAL_GL                     (0x38)
