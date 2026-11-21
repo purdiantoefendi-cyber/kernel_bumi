@@ -3854,6 +3854,13 @@ static int eem_suspend(void)
 static int eem_resume(void)
 {
 	if (ctrl_EEM_Enable) {
+#ifdef CONFIG_MTK_GPU_SUPPORT
+		/* Avoid EEM register access while the GPU buck is still off. */
+		if (mt_gpufreq_get_cur_volt() == 0) {
+			eem_error("Skip EEM resume: GPU voltage rail is off\n");
+			return 0;
+		}
+#endif
 		eem_error("Start EEM resume\n");
 		/* Reset EEM */
 		eem_write(INFRA_EEM_RST, 1);
