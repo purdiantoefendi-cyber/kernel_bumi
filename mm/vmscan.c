@@ -5786,7 +5786,7 @@ static bool allow_direct_reclaim(pg_data_t *pgdat)
 	int i;
 	bool wmark_ok;
 
-	if (pgdat->kswapd_failures >= MAX_RECLAIM_RETRIES)
+	if (pgdat->kswapd_failures >= (MAX_RECLAIM_RETRIES * 4))
 		return true;
 
 	for (i = 0; i <= ZONE_NORMAL; i++) {
@@ -6135,7 +6135,7 @@ static bool prepare_kswapd_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		wake_up_all(&pgdat->pfmemalloc_wait);
 
 	/* Hopeless node, leave it to direct reclaim */
-	if (pgdat->kswapd_failures >= MAX_RECLAIM_RETRIES)
+	if (pgdat->kswapd_failures >= (MAX_RECLAIM_RETRIES * 4))
 		return true;
 
 	if (pgdat_balanced(pgdat, order, classzone_idx)) {
@@ -6557,7 +6557,7 @@ void wakeup_kswapd(struct zone *zone, gfp_t gfp_flags, int order,
 		return;
 
 	/* Hopeless node, leave it to direct reclaim if possible */
-	if (pgdat->kswapd_failures >= MAX_RECLAIM_RETRIES ||
+	if (pgdat->kswapd_failures >= (MAX_RECLAIM_RETRIES * 4) ||
 	    pgdat_balanced(pgdat, order, classzone_idx)) {
 		/*
 		 * There may be plenty of free memory available, but it's too
