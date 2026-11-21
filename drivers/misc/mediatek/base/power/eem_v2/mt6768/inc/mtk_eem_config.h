@@ -230,8 +230,8 @@ enum mt_cpu_dvfs_id {
 
 /* different for GPU */
 #define VMAX_VAL_GPU                    (0x94) /* eem domain: 1.11875v*/
-#define VMIN_VAL_GPU                    (0x6C) /* eem domain: 0.875v (anti-undervolt OC) */
-#define VCO_VAL_GPU                     (0x6C) /* eem domain: 0.875v (anti-undervolt OC) */
+#define VMIN_VAL_GPU                    (0x72) /* eem domain: 0.9125v (OC stability floor) */
+#define VCO_VAL_GPU                     (0x72) /* eem domain: 0.9125v (OC stability floor) */
 
 /* different for GPU_L */
 #define VMAX_VAL_GL                     (0x38)
