@@ -73,6 +73,8 @@ int smpcfd_dead_cpu(unsigned int cpu)
 
 int smpcfd_dying_cpu(unsigned int cpu)
 {
+	unsigned long flags;
+
 	/*
 	 * The IPIs for the smp-call-function callbacks queued by other
 	 * CPUs might arrive late, either due to hardware latencies or
@@ -81,8 +83,15 @@ int smpcfd_dying_cpu(unsigned int cpu)
 	 * explicitly (without waiting for the IPIs to arrive), to
 	 * ensure that the outgoing CPU doesn't go offline with work
 	 * still pending.
+	 *
+	 * CPU hotplug teardown normally invokes this callback with IRQs
+	 * disabled. Keep the requirement explicit and preserve the
+	 * caller's IRQ state: flush_smp_call_function_queue() runs
+	 * irq_work_run(), which requires interrupts to be disabled.
 	 */
+	local_irq_save(flags);
 	flush_smp_call_function_queue(false);
+	local_irq_restore(flags);
 	return 0;
 }
 
