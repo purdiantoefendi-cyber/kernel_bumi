@@ -131,11 +131,12 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 	ret = boot_secondary(cpu, idle);
 	if (ret == 0) {
 		/*
-		 * CPU was successfully started, wait for it to come online or
-		 * time out.
+		 * CPU was successfully started. Allow additional time for the
+		 * secondary CPU to complete early boot during system resume,
+		 * when interrupt and power-domain activity can delay startup.
 		 */
 		wait_for_completion_timeout(&cpu_running,
-					    msecs_to_jiffies(1000));
+					    msecs_to_jiffies(5000));
 
 		if (!cpu_online(cpu)) {
 			pr_crit("CPU%u: failed to come online\n", cpu);
