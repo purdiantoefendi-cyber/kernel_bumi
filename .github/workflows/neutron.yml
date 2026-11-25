@@ -1,4 +1,4 @@
-name: Build Kernel Neutron Custom (Safe & Fast)
+name: Build Kernel Custom (Safe & Fast)
 
 on:
   workflow_dispatch:
@@ -24,15 +24,14 @@ on:
       neutron_version:
         description: 'Pilih Versi Neutron Clang'
         required: true
-        default: '05012024 - Clang 18 (Recommended 4.19)'
+        default: '10032024 - Clang 19 (Opsi Performa)'
         type: choice
         options:
-          - '22072022 - Clang 15 (Rilis Tertua Neutron)'
-          - '18112022 - Clang 16'
-          - '11032023 - Clang 17'
-          - '05012024 - Clang 18 (Recommended 4.19)'
           - '10032024 - Clang 19 (Opsi Performa)'
-          - '02112024 - Clang 20'
+          - '05012024 - Clang 18 (Recommended 4.19)'
+          - '09092023 - Clang 17/18 (Cadangan Aman)'
+          - '29072023 - Clang 17'
+          - '11032023 - Clang 16/17'
           - 'latest - Clang 24 (Terbaru)'
       kernelsu_url:
         description: 'Custom KSU URL (Kosongkan untuk skip KSU)'
@@ -87,15 +86,43 @@ jobs:
       run: |
         curl -LSs "${{ github.event.inputs.kernelsu_url }}" | bash -s "${{ github.event.inputs.kernelsu_branch }}"
 
+    - name: Inject Makefile Overrides
+      run: |
+        inject_flag() {
+          local file="$1"
+          local flag="$2"
+          if [ -e "$file" ]; then
+            printf '\n%s\n' "$flag" >> "$file"
+            echo "Injected [$flag] -> $file"
+          else
+            echo "Skip (tidak ditemukan): $file"
+          fi
+        }
+
+        # 1. Turunkan ke -O1 untuk driver modem MediaTek (pulihkan sinyal di Clang 19)
+        MODEM_FLAGS="subdir-ccflags-y += -O1 -fno-strict-aliasing -fno-delete-null-pointer-checks"
+        inject_flag "drivers/misc/mediatek/eccci/Makefile" "$MODEM_FLAGS"
+        inject_flag "drivers/misc/mediatek/ccci_util/Makefile" "$MODEM_FLAGS"
+        inject_flag "drivers/misc/mediatek/ccmni/Makefile" "$MODEM_FLAGS"
+
+        # 2. Turunkan ke -O1 untuk modul KernelSU (amankan patch SELinux & dekoder ARM64)
+        KSU_FLAGS="subdir-ccflags-y += -O1 -fno-strict-aliasing -fno-delete-null-pointer-checks"
+        inject_flag "drivers/kernelsu/Makefile" "$KSU_FLAGS"
+
+        # 3. Turunkan ke -O2 + cegah tail-call/inlining pada target CONFIG_KSU_HACK_ARM64
+        inject_flag "fs/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -mllvm -inline-threshold=50"
+        inject_flag "kernel/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -fno-inline-functions"
+        inject_flag "drivers/input/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -fno-inline-functions"
+
     - name: Generate Defconfig
       run: |
         make O=out $ARGS ${{ github.event.inputs.defconfig }}
 
     - name: Compile Kernel
       run: |
-        # Flag optimasi yang aman, ditargetkan untuk Cortex-A75 (Otomatis mencakup Cortex-A55)
+        # Flag optimasi -O3 global untuk Cortex-A75/A55 (di-override otomatis oleh Makefile target di atas)
         OPTIMIZATION_FLAGS="-O3 -Wno-error -funroll-loops -fomit-frame-pointer -falign-functions=32 -fno-math-errno -ffinite-math-only -march=armv8.2-a+dotprod -mcpu=cortex-a75 -mtune=cortex-a75"
-        
+
         make O=out -j$(nproc) $ARGS KCFLAGS="$OPTIMIZATION_FLAGS" || \
         make O=out -j1 $ARGS KCFLAGS="$OPTIMIZATION_FLAGS"
 
