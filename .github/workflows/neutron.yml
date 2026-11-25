@@ -1,4 +1,4 @@
-name: Build Kernel Neutron Custom (Safe & Fast)
+name: Build Kernel Custom (Safe & Fast)
 
 on:
   workflow_dispatch:
@@ -27,11 +27,12 @@ on:
         default: '05012024 - Clang 18 (Recommended 4.19)'
         type: choice
         options:
+          - '22072022 - Clang 15 (Rilis Tertua Neutron)'
+          - '18112022 - Clang 16'
+          - '11032023 - Clang 17'
           - '05012024 - Clang 18 (Recommended 4.19)'
           - '10032024 - Clang 19 (Opsi Performa)'
-          - '09092023 - Clang 17/18 (Cadangan Aman)'
-          - '29072023 - Clang 17'
-          - '11032023 - Clang 16/17'
+          - '02112024 - Clang 20'
           - 'latest - Clang 24 (Terbaru)'
       kernelsu_url:
         description: 'Custom KSU URL (Kosongkan untuk skip KSU)'
