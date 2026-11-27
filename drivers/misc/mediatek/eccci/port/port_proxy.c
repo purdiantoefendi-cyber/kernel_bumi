@@ -1009,7 +1009,7 @@ int port_recv_skb(struct port_t *port, struct sk_buff *skb)
 			set_udc_status(skb);
 		port->rx_pkg_cnt++;
 		spin_unlock_irqrestore(&port->rx_skb_list.lock, flags);
-		__pm_wakeup_event(port->rx_wakelock, jiffies_to_msecs(HZ/2));
+		__pm_wakeup_event(port->rx_wakelock, 2000);
 		spin_lock_irqsave(&port->rx_wq.lock, flags);
 		wake_up_all_locked(&port->rx_wq);
 		spin_unlock_irqrestore(&port->rx_wq.lock, flags);
