@@ -92,35 +92,27 @@ jobs:
           local file="$1"
           local flag="$2"
           if [ -e "$file" ]; then
-            if ! grep -Fq "$flag" "$file"; then
-              printf '\n%s\n' "$flag" >> "$file"
-              echo "Injected [$flag] -> $file"
-            else
-              echo "Sudah ada [$flag] -> $file"
-            fi
+            printf '\n%s\n' "$flag" >> "$file"
+            echo "Injected [$flag] -> $file"
           else
             echo "Skip (tidak ditemukan): $file"
           fi
         }
 
-        # Flag -O1 aman untuk driver sensitif & inti KSU/SUSFS (menimpa -O3 -funroll-loops dari KCFLAGS)
-        SAFE_O1_SUBDIR="subdir-ccflags-y += -O1 -fno-unroll-loops -fno-strict-aliasing -fno-delete-null-pointer-checks"
-        SAFE_O1_OBJ="-O1 -fno-unroll-loops -fno-strict-aliasing -fno-delete-null-pointer-checks"
+        # 1. Turunkan ke -O1 untuk driver modem MediaTek (pulihkan sinyal di Clang 19)
+        MODEM_FLAGS="subdir-ccflags-y += -O1 -fno-strict-aliasing -fno-delete-null-pointer-checks"
+        inject_flag "drivers/misc/mediatek/eccci/Makefile" "$MODEM_FLAGS"
+        inject_flag "drivers/misc/mediatek/ccci_util/Makefile" "$MODEM_FLAGS"
+        inject_flag "drivers/misc/mediatek/ccmni/Makefile" "$MODEM_FLAGS"
 
-        # 1. Turunkan ke -O1 untuk driver modem MediaTek (pulihkan sinyal di Clang 19+)
-        inject_flag "drivers/misc/mediatek/eccci/Makefile" "$SAFE_O1_SUBDIR"
-        inject_flag "drivers/misc/mediatek/ccci_util/Makefile" "$SAFE_O1_SUBDIR"
-        inject_flag "drivers/misc/mediatek/ccmni/Makefile" "$SAFE_O1_SUBDIR"
+        # 2. Turunkan ke -O1 untuk modul KernelSU (amankan patch SELinux & dekoder ARM64)
+        KSU_FLAGS="subdir-ccflags-y += -O1 -fno-strict-aliasing -fno-delete-null-pointer-checks"
+        inject_flag "drivers/kernelsu/Makefile" "$KSU_FLAGS"
 
-        # 2. Turunkan ke -O1 untuk seluruh modul KernelSU & subdirektorinya (selinux, sucompat, dll.)
-        inject_flag "drivers/kernelsu/Makefile" "$SAFE_O1_SUBDIR"
-
-        # 3. Turunkan ke -O2 untuk hook VFS/ProcFS/Kernel/Input + -O1 khusus objek inti fs/susfs.o
-        inject_flag "fs/Makefile" "ccflags-y += -O2 -fno-unroll-loops -fno-optimize-sibling-calls -mllvm -inline-threshold=50"
-        inject_flag "fs/Makefile" "CFLAGS_susfs.o += $SAFE_O1_OBJ"
-        inject_flag "fs/proc/Makefile" "ccflags-y += -O2 -fno-unroll-loops -fno-optimize-sibling-calls -mllvm -inline-threshold=50"
-        inject_flag "kernel/Makefile" "ccflags-y += -O2 -fno-unroll-loops -fno-optimize-sibling-calls -fno-inline-functions"
-        inject_flag "drivers/input/Makefile" "ccflags-y += -O2 -fno-unroll-loops -fno-optimize-sibling-calls -fno-inline-functions"
+        # 3. Turunkan ke -O2 + cegah tail-call/inlining pada target CONFIG_KSU_HACK_ARM64
+        inject_flag "fs/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -mllvm -inline-threshold=50"
+        inject_flag "kernel/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -fno-inline-functions"
+        inject_flag "drivers/input/Makefile" "ccflags-y += -O2 -fno-optimize-sibling-calls -fno-inline-functions"
 
     - name: Generate Defconfig
       run: |
@@ -136,16 +128,8 @@ jobs:
 
     - name: Check Build Output
       run: |
-        echo "=== Verifikasi Override Optimasi ==="
-        if ls out/drivers/kernelsu/.*.o.cmd >/dev/null 2>&1; then
-          echo "KernelSU flags: $(grep -oE -- '-O[0-3s]' out/drivers/kernelsu/.*.o.cmd | head -n 4 | tr '\n' ' ')"
-        fi
-        if [ -f out/fs/.susfs.o.cmd ]; then
-          echo "SUSFS core flags: $(grep -oE -- '-O[0-3s]' out/fs/.susfs.o.cmd | tr '\n' ' ')"
-        fi
-
-        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ] && [ ! -f out/arch/arm64/boot/Image.gz ]; then
-          echo "Error: Image.gz-dtb / Image.gz tidak ditemukan. Build kernel gagal."
+        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "Error: Image.gz-dtb tidak ditemukan. Build kernel gagal."
           exit 1
         else
           echo "Kernel berhasil di-build dengan Optimasi Aman & Cepat."
